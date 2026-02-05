@@ -3,6 +3,23 @@
  * Uses Fabric.js for canvas manipulation
  */
 
+// Get CSRF token from cookies (required for Django)
+function getCSRFToken() {
+    const name = 'csrftoken';
+    let cookieValue = null;
+    if (document.cookie && document.cookie !== '') {
+        const cookies = document.cookie.split(';');
+        for (let i = 0; i < cookies.length; i++) {
+            const cookie = cookies[i].trim();
+            if (cookie.substring(0, name.length + 1) === (name + '=')) {
+                cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
+                break;
+            }
+        }
+    }
+    return cookieValue;
+}
+
 // State
 let canvas = null;
 let currentMode = 'pan';
@@ -17,6 +34,177 @@ let cropRect = null;
 let cropStart = null;
 let isCropping = false;
 let sheetCutData = {};  // Store cut data per sheet for flipping
+
+// Undo system
+const undoStack = [];
+const MAX_UNDO_STEPS = 50;
+
+/**
+ * Save state for undo functionality
+ * @param {string} actionType - Type of action: 'move', 'rotate', 'cut', 'clearCut'
+ * @param {object} data - State data to save
+ */
+function saveUndoState(actionType, data) {
+    undoStack.push({
+        type: actionType,
+        timestamp: Date.now(),
+        data: JSON.parse(JSON.stringify(data))  // Deep clone
+    });
+
+    // Limit stack size
+    if (undoStack.length > MAX_UNDO_STEPS) {
+        undoStack.shift();
+    }
+
+    console.log('Undo state saved:', actionType, data);
+}
+
+/**
+ * Undo the last action
+ */
+async function undo() {
+    if (undoStack.length === 0) {
+        console.log('Nothing to undo');
+        return;
+    }
+
+    const lastAction = undoStack.pop();
+    console.log('Undoing action:', lastAction.type, lastAction.data);
+
+    switch (lastAction.type) {
+        case 'transform':
+            await undoTransform(lastAction.data);
+            break;
+        case 'cut':
+            await undoCut(lastAction.data);
+            break;
+        case 'clearCut':
+            await undoClearCut(lastAction.data);
+            break;
+    }
+}
+
+/**
+ * Undo a sheet transform action (combined move + rotate)
+ */
+async function undoTransform(data) {
+    const { sheetId, previousX, previousY, previousRotation } = data;
+
+    // Find sheet object on canvas
+    const sheetObj = canvas.getObjects().find(obj =>
+        obj.sheetData && obj.sheetData.id === sheetId
+    );
+
+    if (sheetObj) {
+        // Restore canvas position and rotation
+        sheetObj.set({
+            left: previousX,
+            top: previousY,
+            angle: previousRotation
+        });
+        sheetObj.setCoords();
+        canvas.renderAll();
+
+        // Update local data
+        const index = sheets.findIndex(s => s.id === sheetId);
+        if (index >= 0) {
+            sheets[index].offset_x = previousX;
+            sheets[index].offset_y = previousY;
+            sheets[index].rotation = previousRotation;
+        }
+
+        // Update properties panel if selected
+        if (selectedSheet && selectedSheet.id === sheetId) {
+            document.getElementById('sheet-offset-x').value = previousX;
+            document.getElementById('sheet-offset-y').value = previousY;
+            document.getElementById('sheet-rotation').value = previousRotation.toFixed(1);
+            selectedSheet.offset_x = previousX;
+            selectedSheet.offset_y = previousY;
+            selectedSheet.rotation = previousRotation;
+        }
+
+        // Save to server (both position and rotation)
+        await fetch(`/api/sheets/${sheetId}/`, {
+            method: 'PATCH',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': getCSRFToken()
+            },
+            body: JSON.stringify({
+                offset_x: previousX,
+                offset_y: previousY,
+                rotation: previousRotation
+            })
+        });
+    }
+}
+
+/**
+ * Undo a cut action (remove the cut)
+ */
+async function undoCut(data) {
+    const { sheetId, previousCutData } = data;
+
+    // Find sheet object on canvas
+    const sheetObj = canvas.getObjects().find(obj =>
+        obj.sheetData && obj.sheetData.id === sheetId
+    );
+
+    if (sheetObj) {
+        // If there was a previous cut, restore it; otherwise clear
+        if (previousCutData) {
+            sheetCutData[sheetId] = previousCutData;
+            applyCutMaskWithDirection(sheetObj, previousCutData.p1, previousCutData.p2, previousCutData.flipped);
+        } else {
+            // No previous cut - clear the clip path
+            sheetObj.clipPath = null;
+            delete sheetCutData[sheetId];
+            canvas.renderAll();
+        }
+
+        // Save to server
+        if (previousCutData) {
+            await saveCutData(sheetId, previousCutData);
+        } else {
+            await fetch(`/api/sheets/${sheetId}/`, {
+                method: 'PATCH',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRFToken': getCSRFToken()
+                },
+                body: JSON.stringify({
+                    crop_x: 0,
+                    crop_y: 0,
+                    crop_width: 0,
+                    crop_height: 0
+                })
+            });
+        }
+    }
+}
+
+/**
+ * Undo a clear cut action (restore the cut)
+ */
+async function undoClearCut(data) {
+    const { sheetId, cutData } = data;
+
+    if (!cutData) return;
+
+    // Find sheet object on canvas
+    const sheetObj = canvas.getObjects().find(obj =>
+        obj.sheetData && obj.sheetData.id === sheetId
+    );
+
+    if (sheetObj) {
+        // Restore the cut
+        sheetCutData[sheetId] = cutData;
+        applyCutMaskWithDirection(sheetObj, cutData.p1, cutData.p2, cutData.flipped);
+
+        // Save to server
+        await saveCutData(sheetId, cutData);
+    }
+}
 
 // Initialize canvas
 document.addEventListener('DOMContentLoaded', function() {
@@ -57,9 +245,23 @@ function setupCanvasEvents() {
     let isPanning = false;
     let lastPosX, lastPosY;
 
+    // Track initial state for undo when interaction starts
+    let interactionStartState = null;
+
     canvas.on('mouse:down', function(opt) {
         const evt = opt.e;
         console.log('mouse:down event, currentMode:', currentMode);
+
+        // Capture state at the beginning of a transformation for undo
+        const target = opt.target;
+        if (target && target.sheetData && currentMode === 'select') {
+            interactionStartState = {
+                sheetId: target.sheetData.id,
+                left: target.left,
+                top: target.top,
+                angle: target.angle
+            };
+        }
 
         if (currentMode === 'pan') {
             isPanning = true;
@@ -133,6 +335,44 @@ function setupCanvasEvents() {
         }
     });
 
+    // Use object:modified which fires after any transformation (move, rotate, scale)
+    canvas.on('object:modified', function(opt) {
+        const obj = opt.target;
+        if (obj.sheetData) {
+            // Save undo state for the transformation (single combined state)
+            if (interactionStartState && interactionStartState.sheetId === obj.sheetData.id) {
+                const positionChanged = interactionStartState.left !== obj.left || interactionStartState.top !== obj.top;
+                const rotationChanged = interactionStartState.angle !== obj.angle;
+
+                // Save a single combined transform state if anything changed
+                if (positionChanged || rotationChanged) {
+                    saveUndoState('transform', {
+                        sheetId: obj.sheetData.id,
+                        previousX: interactionStartState.left,
+                        previousY: interactionStartState.top,
+                        previousRotation: interactionStartState.angle
+                    });
+                }
+                // Clear the interaction state
+                interactionStartState = null;
+            }
+
+            // Check if rotation changed and update
+            updateSheetRotationFromCanvas(obj);
+            // Also save position in case it was moved
+            updateSheetPositionFromCanvas(obj);
+        }
+    });
+
+    // Also update during rotation for live feedback in properties panel
+    canvas.on('object:rotating', function(opt) {
+        const obj = opt.target;
+        if (obj.sheetData && selectedSheet && selectedSheet.id === obj.sheetData.id) {
+            // Live update the rotation field while rotating
+            document.getElementById('sheet-rotation').value = obj.angle.toFixed(1);
+        }
+    });
+
     // Sync selection when user clicks on an object
     canvas.on('selection:created', function(opt) {
         const obj = opt.selected[0];
@@ -152,6 +392,13 @@ function setupCanvasEvents() {
 function setupKeyboardShortcuts() {
     document.addEventListener('keydown', function(e) {
         if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+
+        // Handle Ctrl+Z for undo
+        if ((e.ctrlKey || e.metaKey) && e.key === 'z') {
+            e.preventDefault();
+            undo();
+            return;
+        }
 
         switch(e.key) {
             case '1':
@@ -226,6 +473,7 @@ function setMode(mode) {
         if (obj.sheetData) {
             obj.selectable = isSelectMode;
             obj.evented = isSelectMode || isCropMode;
+            obj.hasControls = isSelectMode;  // Show rotation control only in select mode
         }
     });
     canvas.renderAll();
@@ -262,10 +510,22 @@ function renderSheetLayers() {
         const div = document.createElement('div');
         div.className = 'layer-item';
         div.dataset.sheetId = sheet.id;
-        div.innerHTML = `
-            <input type="checkbox" class="layer-visibility" checked onchange="toggleSheetVisibility(${sheet.id}, this.checked)">
-            <span>${sheet.name}</span>
-        `;
+
+        // Security: Use DOM methods instead of innerHTML to prevent XSS
+        const checkbox = document.createElement('input');
+        checkbox.type = 'checkbox';
+        checkbox.className = 'layer-visibility';
+        checkbox.checked = true;
+        checkbox.addEventListener('change', function() {
+            toggleSheetVisibility(sheet.id, this.checked);
+        });
+
+        const span = document.createElement('span');
+        span.textContent = sheet.name;  // Safe: textContent escapes HTML
+
+        div.appendChild(checkbox);
+        div.appendChild(span);
+
         div.addEventListener('click', (e) => {
             if (e.target.type !== 'checkbox') {
                 selectSheet(sheet.id);
@@ -282,11 +542,24 @@ function renderAssetList() {
     assets.forEach(asset => {
         const div = document.createElement('div');
         div.className = 'asset-item' + (asset.is_adjusted ? ' adjusted' : '');
-        div.innerHTML = `
-            <strong>${asset.asset_id}</strong>
-            ${asset.name ? `<br><small>${asset.name}</small>` : ''}
-            <div class="coordinates">X: ${asset.current_x.toFixed(2)}m, Y: ${asset.current_y.toFixed(2)}m</div>
-        `;
+
+        // Security: Use DOM methods instead of innerHTML to prevent XSS
+        const strong = document.createElement('strong');
+        strong.textContent = asset.asset_id;  // Safe: textContent escapes HTML
+        div.appendChild(strong);
+
+        if (asset.name) {
+            div.appendChild(document.createElement('br'));
+            const small = document.createElement('small');
+            small.textContent = asset.name;  // Safe: textContent escapes HTML
+            div.appendChild(small);
+        }
+
+        const coordsDiv = document.createElement('div');
+        coordsDiv.className = 'coordinates';
+        coordsDiv.textContent = `X: ${asset.current_x.toFixed(2)}m, Y: ${asset.current_y.toFixed(2)}m`;
+        div.appendChild(coordsDiv);
+
         div.addEventListener('click', () => selectAsset(asset.id));
         container.appendChild(div);
     });
@@ -321,36 +594,27 @@ function renderSheetsOnCanvas() {
                     angle: sheet.rotation,
                     selectable: currentMode === 'select',
                     evented: true,
-                    // Completely disable all controls and resize handles
-                    hasControls: false,
+                    // Enable rotation control only, disable scaling
+                    hasControls: true,
                     hasBorders: true,
-                    hasRotatingPoint: false,
+                    hasRotatingPoint: true,
                     lockScalingX: true,
                     lockScalingY: true,
                     lockUniScaling: true,
-                    lockRotation: true,
-                    // Ensure corners are not visible even if hasControls fails
-                    cornerSize: 0,
-                    transparentCorners: true,
+                    lockRotation: false,  // Allow rotation
+                    // Rotation control styling
+                    cornerSize: 12,
+                    cornerColor: '#3498db',
+                    cornerStrokeColor: '#2980b9',
+                    transparentCorners: false,
                     borderColor: '#3498db',
-                    // Disable all control visibility
-                    setControlsVisibility: function() {
-                        this.setControlVisible('tl', false);
-                        this.setControlVisible('tr', false);
-                        this.setControlVisible('bl', false);
-                        this.setControlVisible('br', false);
-                        this.setControlVisible('ml', false);
-                        this.setControlVisible('mt', false);
-                        this.setControlVisible('mr', false);
-                        this.setControlVisible('mb', false);
-                        this.setControlVisible('mtr', false);
-                    }
+                    rotatingPointOffset: 30,
                 });
-                // Call to hide all controls
+                // Only show rotation control (mtr), hide all resize controls
                 img.setControlsVisibility({
                     tl: false, tr: false, bl: false, br: false,
                     ml: false, mt: false, mr: false, mb: false,
-                    mtr: false
+                    mtr: true  // Show rotation control
                 });
                 img.sheetData = sheet;
                 canvas.add(img);
@@ -621,7 +885,10 @@ async function applyCalibration() {
     try {
         const response = await fetch(`/api/projects/${PROJECT_ID}/calibrate/`, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': getCSRFToken()
+            },
             body: JSON.stringify({
                 pixel_distance: pixelDistance,
                 real_distance: realDistance
@@ -660,7 +927,10 @@ async function handleOriginClick(opt) {
     try {
         const response = await fetch(`/api/projects/${PROJECT_ID}/calibrate/`, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': getCSRFToken()
+            },
             body: JSON.stringify({
                 origin_x: pointer.x,
                 origin_y: pointer.y
@@ -726,7 +996,10 @@ async function saveAssetAdjustment() {
     try {
         const response = await fetch(`/api/assets/${selectedAsset.id}/adjust/`, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': getCSRFToken()
+            },
             body: JSON.stringify({ x: newX, y: newY, notes: notes })
         });
 
@@ -756,11 +1029,57 @@ function updateSheetPositionFromCanvas(obj) {
     saveSheetPosition(sheetId, obj.left, obj.top);
 }
 
+function updateSheetRotationFromCanvas(obj) {
+    if (!obj.sheetData) return;
+
+    const sheetId = obj.sheetData.id;
+    const rotation = obj.angle;
+
+    // Update local data
+    const index = sheets.findIndex(s => s.id === sheetId);
+    if (index >= 0) {
+        sheets[index].rotation = rotation;
+    }
+
+    // Update properties panel if this sheet is selected
+    if (selectedSheet && selectedSheet.id === sheetId) {
+        selectedSheet.rotation = rotation;
+        document.getElementById('sheet-rotation').value = rotation.toFixed(1);
+    }
+
+    // Save to server
+    saveSheetRotation(sheetId, rotation);
+}
+
+async function saveSheetRotation(sheetId, rotation) {
+    try {
+        const response = await fetch(`/api/sheets/${sheetId}/`, {
+            method: 'PATCH',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': getCSRFToken()
+            },
+            body: JSON.stringify({ rotation: rotation })
+        });
+
+        if (!response.ok) {
+            console.error('Error saving sheet rotation:', await response.text());
+        } else {
+            console.log('Sheet rotation saved:', rotation);
+        }
+    } catch (error) {
+        console.error('Error saving sheet rotation:', error);
+    }
+}
+
 async function saveSheetPosition(sheetId, x, y) {
     try {
         const response = await fetch(`/api/sheets/${sheetId}/`, {
             method: 'PATCH',
-            headers: { 'Content-Type': 'application/json' },
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': getCSRFToken()
+            },
             body: JSON.stringify({ offset_x: x, offset_y: y })
         });
 
@@ -790,7 +1109,10 @@ async function updateSheetProperty(property, value, reload = true) {
     try {
         const response = await fetch(`/api/sheets/${selectedSheet.id}/`, {
             method: 'PATCH',
-            headers: { 'Content-Type': 'application/json' },
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': getCSRFToken()
+            },
             body: JSON.stringify(data)
         });
 
@@ -799,10 +1121,44 @@ async function updateSheetProperty(property, value, reload = true) {
             const index = sheets.findIndex(s => s.id === selectedSheet.id);
             sheets[index] = updated;
             selectedSheet = updated;
+
+            // Update the canvas object visually
+            updateSheetOnCanvas(selectedSheet.id, property, value);
         }
     } catch (error) {
         console.error('Error updating sheet:', error);
     }
+}
+
+function updateSheetOnCanvas(sheetId, property, value) {
+    // Find the sheet object on canvas and update its visual property
+    canvas.getObjects().forEach(obj => {
+        if (obj.sheetData && obj.sheetData.id === sheetId) {
+            switch (property) {
+                case 'rotation':
+                    obj.set('angle', parseFloat(value));
+                    break;
+                case 'offset_x':
+                    obj.set('left', parseFloat(value));
+                    break;
+                case 'offset_y':
+                    obj.set('top', parseFloat(value));
+                    break;
+                case 'z_index':
+                    // Re-order layers based on z_index
+                    // Higher z_index = more to front
+                    const zIndex = parseInt(value);
+                    if (zIndex > 0) {
+                        canvas.bringToFront(obj);
+                    } else {
+                        canvas.sendToBack(obj);
+                    }
+                    break;
+            }
+            obj.setCoords();  // Update object coordinates after transformation
+            canvas.renderAll();
+        }
+    });
 }
 
 // Refresh Functions
@@ -928,6 +1284,9 @@ document.getElementById('uploadForm').addEventListener('submit', async function(
     try {
         const response = await fetch(`/api/projects/${PROJECT_ID}/sheets/`, {
             method: 'POST',
+            headers: {
+                'X-CSRFToken': getCSRFToken()
+            },
             body: formData
         });
 
@@ -950,6 +1309,9 @@ document.getElementById('importForm').addEventListener('submit', async function(
     try {
         const response = await fetch(`/api/projects/${PROJECT_ID}/import-csv/`, {
             method: 'POST',
+            headers: {
+                'X-CSRFToken': getCSRFToken()
+            },
             body: formData
         });
 
@@ -971,7 +1333,10 @@ async function exportProject() {
     try {
         const response = await fetch(`/api/projects/${PROJECT_ID}/export/`, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': getCSRFToken()
+            },
             body: JSON.stringify({})
         });
 
@@ -1108,16 +1473,25 @@ function handleCropEnd(opt) {
 }
 
 function applyCutMask(sheetObj, p1, p2) {
+    const sheetId = sheetObj.sheetData.id;
+
+    // Save undo state - capture previous cut data (if any)
+    const previousCutData = sheetCutData[sheetId] ? JSON.parse(JSON.stringify(sheetCutData[sheetId])) : null;
+    saveUndoState('cut', {
+        sheetId: sheetId,
+        previousCutData: previousCutData
+    });
+
     // Store cut data for flipping later
     const cutData = {
         p1: { x: p1.x, y: p1.y },
         p2: { x: p2.x, y: p2.y },
         flipped: false
     };
-    sheetCutData[sheetObj.sheetData.id] = cutData;
+    sheetCutData[sheetId] = cutData;
 
     applyCutMaskWithDirection(sheetObj, p1, p2, false);
-    saveCutData(sheetObj.sheetData.id, cutData);
+    saveCutData(sheetId, cutData);
     console.log('Cut applied to sheet:', sheetObj.sheetData.name);
 }
 
@@ -1233,7 +1607,10 @@ async function saveCutData(sheetId, cutData) {
         // A better solution would add a dedicated field for cut masks
         const response = await fetch(`/api/sheets/${sheetId}/`, {
             method: 'PATCH',
-            headers: { 'Content-Type': 'application/json' },
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': getCSRFToken()
+            },
             body: JSON.stringify({
                 crop_x: cutData.p1.x,
                 crop_y: cutData.p1.y,
@@ -1264,13 +1641,26 @@ function clearSelectedSheetCut() {
         console.log('No sheet selected for clearing cut');
         return;
     }
+
+    // Save undo state before clearing - capture current cut data
+    const existingCutData = sheetCutData[selectedSheet.id];
+    if (existingCutData) {
+        saveUndoState('clearCut', {
+            sheetId: selectedSheet.id,
+            cutData: JSON.parse(JSON.stringify(existingCutData))
+        });
+    }
+
     clearSheetCut(selectedSheet.id);
     delete sheetCutData[selectedSheet.id];
 
     // Clear saved cut data
     fetch(`/api/sheets/${selectedSheet.id}/`, {
         method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+            'Content-Type': 'application/json',
+            'X-CSRFToken': getCSRFToken()
+        },
         body: JSON.stringify({
             crop_x: 0,
             crop_y: 0,

@@ -10,3 +10,9 @@ reportlab>=4.0.0
 
 # Utilities
 python-dotenv>=1.0.0
+
+# Security (optional - for enhanced file type validation)
+# On Windows: pip install python-magic-bin
+# On Linux: pip install python-magic (requires: apt-get install libmagic1)
+# On macOS: pip install python-magic (requires: brew install libmagic)
+# python-magic-bin>=0.4.14  # Uncomment for Windows

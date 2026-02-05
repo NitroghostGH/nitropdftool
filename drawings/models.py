@@ -1,6 +1,7 @@
 """Models for the PDF alignment and asset overlay system."""
 import math
 from django.db import models
+from .validators import PDFFileValidator, ImageFileValidator
 
 
 class Project(models.Model):
@@ -26,7 +27,10 @@ class Sheet(models.Model):
     """A single PDF page/sheet within a project."""
     project = models.ForeignKey(Project, on_delete=models.CASCADE, related_name='sheets')
     name = models.CharField(max_length=255)
-    pdf_file = models.FileField(upload_to='pdfs/')
+    pdf_file = models.FileField(
+        upload_to='pdfs/',
+        validators=[PDFFileValidator(max_size=50 * 1024 * 1024)]  # 50 MB max
+    )
     page_number = models.PositiveIntegerField(default=1, help_text="Page number within the PDF")
 
     # Rendered image cache
@@ -92,7 +96,13 @@ class AssetType(models.Model):
 
     name = models.CharField(max_length=100, unique=True)
     icon_shape = models.CharField(max_length=20, choices=ICON_CHOICES, default='circle')
-    custom_icon = models.ImageField(upload_to='icons/', blank=True, null=True, help_text="Custom icon image (PNG/JPG)")
+    custom_icon = models.ImageField(
+        upload_to='icons/',
+        blank=True,
+        null=True,
+        help_text="Custom icon image (PNG/JPG)",
+        validators=[ImageFileValidator(max_size=5 * 1024 * 1024)]  # 5 MB max
+    )
     color = models.CharField(max_length=7, default='#FF0000', help_text="Hex color code")
     size = models.PositiveIntegerField(default=20, help_text="Icon size in pixels")
 

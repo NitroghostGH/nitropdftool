@@ -4,7 +4,22 @@ import csv
 from io import StringIO
 from django.http import HttpResponse
 from django.conf import settings
+from django.utils.text import slugify
 from .pdf_processor import render_overlay_on_pdf
+
+
+def sanitize_filename(name, max_length=100):
+    """
+    Sanitize a string for use as a filename.
+    Prevents path traversal and removes unsafe characters.
+    """
+    # Use slugify to remove unsafe characters and normalize
+    safe_name = slugify(name, allow_unicode=False)
+    # Ensure it's not empty after sanitization
+    if not safe_name:
+        safe_name = 'unnamed'
+    # Truncate to max length
+    return safe_name[:max_length]
 
 
 def export_sheet_with_overlays(sheet, assets):
@@ -36,7 +51,9 @@ def export_sheet_with_overlays(sheet, assets):
     export_dir = os.path.join(settings.MEDIA_ROOT, 'exports', f'project_{project.id}')
     os.makedirs(export_dir, exist_ok=True)
 
-    output_filename = f"{sheet.name}_annotated.pdf"
+    # Security: Sanitize filename to prevent path traversal
+    safe_name = sanitize_filename(sheet.name)
+    output_filename = f"{safe_name}_annotated.pdf"
     output_path = os.path.join(export_dir, output_filename)
 
     # Render overlays on PDF
@@ -103,7 +120,9 @@ def generate_adjustment_report(project, adjusted_assets, logs, format_type='csv'
             ])
 
         response = HttpResponse(output.getvalue(), content_type='text/csv')
-        response['Content-Disposition'] = f'attachment; filename="{project.name}_adjustments.csv"'
+        # Security: Sanitize filename to prevent header injection
+        safe_name = sanitize_filename(project.name)
+        response['Content-Disposition'] = f'attachment; filename="{safe_name}_adjustments.csv"'
         return response
 
     return None
@@ -142,7 +161,9 @@ def generate_full_project_export(project):
         logs = AdjustmentLog.objects.filter(asset__project=project)
         report_response = generate_adjustment_report(project, adjusted_assets, logs, 'csv')
 
-        report_path = os.path.join(export_dir, f"{project.name}_adjustments.csv")
+        # Security: Sanitize filename
+        safe_project_name = sanitize_filename(project.name)
+        report_path = os.path.join(export_dir, f"{safe_project_name}_adjustments.csv")
         with open(report_path, 'w') as f:
             f.write(report_response.content.decode('utf-8'))
 
