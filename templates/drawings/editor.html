@@ -458,24 +458,63 @@
     </div>
 </div>
 
-<!-- Import CSV Modal -->
+<!-- Import CSV Modal (Two-step) -->
 <div id="importModal" class="modal">
     <div class="modal-content">
         <h2 style="margin-bottom: 1rem;">Import Assets from CSV</h2>
-        <p class="text-muted" style="margin-bottom: 1rem;">
-            Required columns: asset_id, asset_type, x, y<br>
-            Optional: name, description, and any metadata
-        </p>
-        <form id="importForm" enctype="multipart/form-data">
+
+        <!-- Step 1: File Selection -->
+        <div id="import-step-1">
+            <p class="text-muted" style="margin-bottom: 1rem;">
+                Select a CSV file, then map its columns to the required fields.
+            </p>
             <div class="form-group">
                 <label>CSV File</label>
-                <input type="file" name="file" accept=".csv" required>
+                <input type="file" id="import-csv-file" accept=".csv" required>
             </div>
             <div style="display: flex; gap: 1rem; justify-content: flex-end;">
                 <button type="button" class="btn" style="background: #6c757d;" onclick="hideImportModal()">Cancel</button>
-                <button type="submit" class="btn btn-success">Import</button>
+                <button type="button" class="btn btn-success" onclick="importStepNext()">Next</button>
             </div>
-        </form>
+        </div>
+
+        <!-- Step 2: Column Mapping -->
+        <div id="import-step-2" style="display: none;">
+            <p class="text-muted" style="margin-bottom: 0.75rem;">
+                Map CSV columns to the required fields. Auto-detected where possible.
+            </p>
+            <div id="import-csv-preview" style="margin-bottom: 0.75rem; padding: 0.5rem; background: #f8f9fa; border-radius: 4px; font-size: 0.85rem; max-height: 60px; overflow-y: auto;"></div>
+            <div class="form-group">
+                <label>Asset ID <span style="color: #dc3545;">*</span></label>
+                <select id="map-asset-id" style="width: 100%; padding: 0.4rem; border: 1px solid #ddd; border-radius: 4px;">
+                </select>
+            </div>
+            <div class="form-group">
+                <label>Asset Type <span style="color: #dc3545;">*</span></label>
+                <select id="map-asset-type" style="width: 100%; padding: 0.4rem; border: 1px solid #ddd; border-radius: 4px;">
+                </select>
+            </div>
+            <div class="form-group">
+                <label>X Coordinate <span style="color: #dc3545;">*</span></label>
+                <select id="map-x" style="width: 100%; padding: 0.4rem; border: 1px solid #ddd; border-radius: 4px;">
+                </select>
+            </div>
+            <div class="form-group">
+                <label>Y Coordinate <span style="color: #dc3545;">*</span></label>
+                <select id="map-y" style="width: 100%; padding: 0.4rem; border: 1px solid #ddd; border-radius: 4px;">
+                </select>
+            </div>
+            <div class="form-group">
+                <label>Name (optional)</label>
+                <select id="map-name" style="width: 100%; padding: 0.4rem; border: 1px solid #ddd; border-radius: 4px;">
+                    <option value="">-- None --</option>
+                </select>
+            </div>
+            <div style="display: flex; gap: 1rem; justify-content: flex-end;">
+                <button type="button" class="btn" style="background: #6c757d;" onclick="importStepBack()">Back</button>
+                <button type="button" class="btn btn-success" onclick="importWithMapping()">Import</button>
+            </div>
+        </div>
     </div>
 </div>
 

@@ -1,7 +1,7 @@
 """Django admin configuration for drawings app."""
 from django.contrib import admin
 from django.utils.html import format_html
-from .models import Project, Sheet, JoinMark, AssetType, Asset, AdjustmentLog
+from .models import Project, Sheet, JoinMark, AssetType, Asset, AdjustmentLog, ColumnPreset
 
 
 @admin.register(AssetType)
@@ -114,3 +114,12 @@ class AdjustmentLogAdmin(admin.ModelAdmin):
             return obj.notes[:50] + '...' if len(obj.notes) > 50 else obj.notes
         return '-'
     notes_preview.short_description = 'Notes'
+
+
+@admin.register(ColumnPreset)
+class ColumnPresetAdmin(admin.ModelAdmin):
+    """Admin for managing CSV column name presets."""
+    list_display = ['column_name', 'role', 'priority']
+    list_filter = ['role']
+    list_editable = ['priority']
+    search_fields = ['column_name']

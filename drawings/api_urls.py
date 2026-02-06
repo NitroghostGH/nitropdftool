@@ -20,6 +20,7 @@ urlpatterns = [
 
     # CSV Import
     path('projects/<int:project_pk>/import-csv/', api_views.import_csv, name='import-csv'),
+    path('column-presets/', api_views.column_presets, name='column-presets'),
 
     # Export
     path('projects/<int:project_pk>/export/', api_views.export_project, name='export-project'),

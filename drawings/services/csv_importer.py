@@ -7,26 +7,31 @@ from ..models import Asset, AssetType
 
 logger = logging.getLogger(__name__)
 
+# Default column names when no mapping is provided
+DEFAULT_MAPPING = {
+    'asset_id': 'asset_id',
+    'asset_type': 'asset_type',
+    'x': 'x',
+    'y': 'y',
+    'name': 'name',
+}
 
-def import_assets_from_csv(project, csv_file):
+
+def import_assets_from_csv(project, csv_file, column_mapping=None):
     """
     Import assets from a CSV file into a project.
-
-    Expected CSV format:
-    asset_id,asset_type,x,y,name,description,...
-
-    - asset_id: Unique identifier (required)
-    - asset_type: Must match an AssetType name (required)
-    - x, y: Coordinates in meters (required)
-    - Additional columns are stored as metadata
 
     Args:
         project: Project model instance
         csv_file: Uploaded file object
+        column_mapping: Optional dict mapping roles to CSV column names, e.g.
+            {'asset_id': 'TN', 'asset_type': 'asset_type', 'x': 'Easting', 'y': 'Northing'}
 
     Returns:
         dict with import results
     """
+    mapping = {**DEFAULT_MAPPING, **(column_mapping or {})}
+
     # Read the CSV content
     content = csv_file.read()
     if isinstance(content, bytes):
@@ -34,12 +39,19 @@ def import_assets_from_csv(project, csv_file):
 
     reader = csv.DictReader(io.StringIO(content))
 
-    # Validate required columns
+    # Validate that mapped columns exist in the CSV
     fieldnames = reader.fieldnames
-    required_columns = ['asset_id', 'asset_type', 'x', 'y']
-    missing = [col for col in required_columns if col not in fieldnames]
+    required_roles = ['asset_id', 'asset_type', 'x', 'y']
+    missing = []
+    for role in required_roles:
+        col = mapping.get(role, '')
+        if not col or col not in fieldnames:
+            missing.append(f"{role} (mapped to '{col}')")
     if missing:
-        raise ValueError(f"Missing required columns: {', '.join(missing)}")
+        raise ValueError(f"Missing columns in CSV: {', '.join(missing)}")
+
+    # Build set of mapped column names to exclude from metadata
+    mapped_columns = set(mapping.values())
 
     # Get or create asset types
     asset_types_cache = {at.name.lower(): at for at in AssetType.objects.all()}
@@ -51,21 +63,27 @@ def import_assets_from_csv(project, csv_file):
         'assets': []
     }
 
+    col_id = mapping['asset_id']
+    col_type = mapping['asset_type']
+    col_x = mapping['x']
+    col_y = mapping['y']
+    col_name = mapping.get('name', '')
+
     with transaction.atomic():
         for row_num, row in enumerate(reader, start=2):  # Start at 2 (1-indexed + header)
             try:
-                # Validate required fields
-                asset_id = row.get('asset_id', '').strip()
-                asset_type_name = row.get('asset_type', '').strip()
-                x_str = row.get('x', '').strip()
-                y_str = row.get('y', '').strip()
+                # Extract fields using mapped column names
+                asset_id = row.get(col_id, '').strip()
+                asset_type_name = row.get(col_type, '').strip()
+                x_str = row.get(col_x, '').strip()
+                y_str = row.get(col_y, '').strip()
 
                 if not asset_id:
-                    results['errors'].append(f"Row {row_num}: Missing asset_id")
+                    results['errors'].append(f"Row {row_num}: Missing asset_id (column '{col_id}')")
                     continue
 
                 if not asset_type_name:
-                    results['errors'].append(f"Row {row_num}: Missing asset_type")
+                    results['errors'].append(f"Row {row_num}: Missing asset_type (column '{col_type}')")
                     continue
 
                 # Parse coordinates
@@ -73,7 +91,7 @@ def import_assets_from_csv(project, csv_file):
                     x = float(x_str)
                     y = float(y_str)
                 except ValueError:
-                    results['errors'].append(f"Row {row_num}: Invalid coordinates (x={x_str}, y={y_str})")
+                    results['errors'].append(f"Row {row_num}: Invalid coordinates ({col_x}={x_str}, {col_y}={y_str})")
                     continue
 
                 # Get or create asset type
@@ -85,14 +103,14 @@ def import_assets_from_csv(project, csv_file):
                 else:
                     asset_type = asset_types_cache[asset_type_key]
 
-                # Build metadata from extra columns
+                # Build metadata from extra columns (not mapped to any role)
                 metadata = {}
                 for key, value in row.items():
-                    if key not in required_columns and key != 'name' and value:
+                    if key not in mapped_columns and value:
                         metadata[key] = value
 
                 # Get optional name
-                name = row.get('name', '').strip()
+                name = row.get(col_name, '').strip() if col_name else ''
 
                 # Create or update asset
                 asset, created = Asset.objects.update_or_create(
@@ -128,33 +146,3 @@ def import_assets_from_csv(project, csv_file):
         logger.warning("CSV import errors: %s", results['errors'][:5])  # Log first 5
 
     return results
-
-
-def validate_csv_format(csv_file):
-    """
-    Validate CSV format without importing.
-
-    Returns dict with validation results.
-    """
-    content = csv_file.read()
-    if isinstance(content, bytes):
-        content = content.decode('utf-8-sig')
-
-    # Reset file position for potential reuse
-    csv_file.seek(0)
-
-    reader = csv.DictReader(io.StringIO(content))
-    fieldnames = reader.fieldnames
-
-    required_columns = ['asset_id', 'asset_type', 'x', 'y']
-    missing = [col for col in required_columns if col not in fieldnames]
-
-    # Count rows
-    row_count = sum(1 for _ in reader)
-
-    return {
-        'valid': len(missing) == 0,
-        'columns': fieldnames,
-        'missing_columns': missing,
-        'row_count': row_count
-    }

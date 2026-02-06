@@ -9,7 +9,7 @@ from rest_framework import generics, status
 from rest_framework.decorators import api_view
 from rest_framework.response import Response
 
-from .models import Project, Sheet, Asset, AdjustmentLog, AssetType
+from .models import Project, Sheet, Asset, AdjustmentLog, AssetType, ColumnPreset
 
 logger = logging.getLogger(__name__)
 from .serializers import (
@@ -183,15 +183,25 @@ def adjust_asset(request, pk):
 
 @api_view(['POST'])
 def import_csv(request, project_pk):
-    """Import assets from CSV file."""
+    """Import assets from CSV file with optional column mapping."""
     project = get_object_or_404(Project, pk=project_pk)
 
     if 'file' not in request.FILES:
         return Response({'error': 'No file provided'}, status=400)
 
     csv_file = request.FILES['file']
+
+    # Parse column_mapping if provided (JSON string in form data)
+    column_mapping = None
+    mapping_raw = request.data.get('column_mapping')
+    if mapping_raw:
+        try:
+            column_mapping = json.loads(mapping_raw) if isinstance(mapping_raw, str) else mapping_raw
+        except (json.JSONDecodeError, TypeError):
+            return Response({'error': 'Invalid column_mapping JSON'}, status=400)
+
     try:
-        result = import_assets_from_csv(project, csv_file)
+        result = import_assets_from_csv(project, csv_file, column_mapping=column_mapping)
         return Response(result)
     except Exception as e:
         logger.error("CSV import failed for project %d: %s", project_pk, e)
@@ -257,6 +267,16 @@ def adjustment_report(request, project_pk):
         })
 
     return Response(report)
+
+
+@api_view(['GET'])
+def column_presets(request):
+    """Return column presets grouped by role for CSV import mapping."""
+    presets = ColumnPreset.objects.all()
+    grouped = {}
+    for preset in presets:
+        grouped.setdefault(preset.role, []).append(preset.column_name)
+    return Response(grouped)
 
 
 def _parse_finite_float(value, name):

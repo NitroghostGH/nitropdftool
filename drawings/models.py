@@ -225,3 +225,27 @@ class AdjustmentLog(models.Model):
         self.delta_y = self.to_y - self.from_y
         self.delta_distance = math.sqrt(self.delta_x ** 2 + self.delta_y ** 2)
         super().save(*args, **kwargs)
+
+
+class ColumnPreset(models.Model):
+    """Admin-managed mapping of known CSV column names to import roles."""
+    ROLE_CHOICES = [
+        ('asset_id', 'Asset ID'),
+        ('asset_type', 'Asset Type'),
+        ('x', 'X Coordinate'),
+        ('y', 'Y Coordinate'),
+        ('name', 'Name (optional)'),
+    ]
+
+    role = models.CharField(max_length=20, choices=ROLE_CHOICES)
+    column_name = models.CharField(max_length=100, help_text="CSV column header that maps to this role")
+    priority = models.IntegerField(default=0, help_text="Higher = preferred when multiple matches")
+
+    class Meta:
+        ordering = ['role', '-priority']
+        unique_together = ['role', 'column_name']
+        verbose_name = "Column Preset"
+        verbose_name_plural = "Column Presets"
+
+    def __str__(self):
+        return f"{self.column_name} \u2192 {self.get_role_display()}"

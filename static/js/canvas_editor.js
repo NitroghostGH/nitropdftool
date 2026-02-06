@@ -1826,12 +1826,173 @@ function hideUploadModal() {
     document.getElementById('uploadModal').style.display = 'none';
 }
 
+// CSV Import — Two-step flow
+let importCsvFile = null;      // The selected CSV File object
+let importCsvHeaders = [];     // Parsed column headers
+let importColumnPresets = {};  // Admin-configured presets
+
 function showImportModal() {
+    // Reset to step 1
+    document.getElementById('import-step-1').style.display = 'block';
+    document.getElementById('import-step-2').style.display = 'none';
+    document.getElementById('import-csv-file').value = '';
+    importCsvFile = null;
+    importCsvHeaders = [];
     document.getElementById('importModal').style.display = 'block';
 }
 
 function hideImportModal() {
     document.getElementById('importModal').style.display = 'none';
+}
+
+async function importStepNext() {
+    const fileInput = document.getElementById('import-csv-file');
+    if (!fileInput.files.length) {
+        alert('Please select a CSV file.');
+        return;
+    }
+
+    importCsvFile = fileInput.files[0];
+
+    // Parse CSV headers client-side
+    try {
+        const text = await importCsvFile.text();
+        const firstLine = text.split('\n')[0].trim();
+        // Handle quoted headers
+        importCsvHeaders = firstLine.split(',').map(h => h.trim().replace(/^["']|["']$/g, ''));
+
+        if (importCsvHeaders.length === 0) {
+            alert('Could not parse CSV headers.');
+            return;
+        }
+    } catch (err) {
+        alert('Error reading CSV file: ' + err.message);
+        return;
+    }
+
+    // Fetch presets from admin
+    try {
+        const resp = await fetch('/api/column-presets/');
+        if (resp.ok) {
+            importColumnPresets = await resp.json();
+        }
+    } catch (err) {
+        console.error('Could not fetch column presets:', err);
+        importColumnPresets = {};
+    }
+
+    // Show preview of detected columns
+    const preview = document.getElementById('import-csv-preview');
+    preview.textContent = 'Detected columns: ' + importCsvHeaders.join(', ');
+
+    // Populate dropdowns
+    const roles = [
+        { id: 'map-asset-id', role: 'asset_id', required: true },
+        { id: 'map-asset-type', role: 'asset_type', required: true },
+        { id: 'map-x', role: 'x', required: true },
+        { id: 'map-y', role: 'y', required: true },
+        { id: 'map-name', role: 'name', required: false },
+    ];
+
+    roles.forEach(({ id, role, required }) => {
+        const select = document.getElementById(id);
+        select.innerHTML = '';
+
+        if (!required) {
+            const noneOpt = document.createElement('option');
+            noneOpt.value = '';
+            noneOpt.textContent = '-- None --';
+            select.appendChild(noneOpt);
+        }
+
+        importCsvHeaders.forEach(header => {
+            const opt = document.createElement('option');
+            opt.value = header;
+            opt.textContent = header;
+            select.appendChild(opt);
+        });
+
+        // Auto-match: check presets (ordered by priority from API)
+        const presetNames = importColumnPresets[role] || [];
+        let matched = false;
+        for (const presetName of presetNames) {
+            const match = importCsvHeaders.find(h => h.toLowerCase() === presetName.toLowerCase());
+            if (match) {
+                select.value = match;
+                matched = true;
+                break;
+            }
+        }
+
+        // If no preset matched, try exact case-insensitive match on role name
+        if (!matched) {
+            const fallback = importCsvHeaders.find(h => h.toLowerCase() === role.toLowerCase());
+            if (fallback) {
+                select.value = fallback;
+            }
+        }
+    });
+
+    // Switch to step 2
+    document.getElementById('import-step-1').style.display = 'none';
+    document.getElementById('import-step-2').style.display = 'block';
+}
+
+function importStepBack() {
+    document.getElementById('import-step-2').style.display = 'none';
+    document.getElementById('import-step-1').style.display = 'block';
+}
+
+async function importWithMapping() {
+    if (!importCsvFile) {
+        alert('No CSV file selected.');
+        return;
+    }
+
+    const mapping = {
+        asset_id: document.getElementById('map-asset-id').value,
+        asset_type: document.getElementById('map-asset-type').value,
+        x: document.getElementById('map-x').value,
+        y: document.getElementById('map-y').value,
+    };
+
+    // Validate required fields are selected
+    for (const [role, col] of Object.entries(mapping)) {
+        if (!col) {
+            alert(`Please select a column for "${role}".`);
+            return;
+        }
+    }
+
+    const nameCol = document.getElementById('map-name').value;
+    if (nameCol) {
+        mapping.name = nameCol;
+    }
+
+    const formData = new FormData();
+    formData.append('file', importCsvFile);
+    formData.append('column_mapping', JSON.stringify(mapping));
+
+    try {
+        const response = await fetch(`/api/projects/${PROJECT_ID}/import-csv/`, {
+            method: 'POST',
+            headers: {
+                'X-CSRFToken': getCSRFToken()
+            },
+            body: formData
+        });
+
+        const result = await response.json();
+        if (response.ok) {
+            alert(`Import complete:\n${result.created} created\n${result.updated} updated\n${result.errors.length} errors`);
+            hideImportModal();
+            loadProjectData();
+        } else {
+            alert('Error: ' + result.error);
+        }
+    } catch (error) {
+        console.error('Import error:', error);
+    }
 }
 
 // Form Handlers
@@ -1868,32 +2029,6 @@ document.getElementById('uploadForm').addEventListener('submit', async function(
         }
     } catch (error) {
         console.error('Upload error:', error);
-    }
-});
-
-document.getElementById('importForm').addEventListener('submit', async function(e) {
-    e.preventDefault();
-    const formData = new FormData(this);
-
-    try {
-        const response = await fetch(`/api/projects/${PROJECT_ID}/import-csv/`, {
-            method: 'POST',
-            headers: {
-                'X-CSRFToken': getCSRFToken()
-            },
-            body: formData
-        });
-
-        const result = await response.json();
-        if (response.ok) {
-            alert(`Import complete:\n${result.created} created\n${result.updated} updated\n${result.errors.length} errors`);
-            hideImportModal();
-            loadProjectData();
-        } else {
-            alert('Error: ' + result.error);
-        }
-    } catch (error) {
-        console.error('Import error:', error);
     }
 });
 
