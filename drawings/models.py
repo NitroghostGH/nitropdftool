@@ -46,6 +46,7 @@ class Sheet(models.Model):
     crop_y = models.FloatField(default=0.0)
     crop_width = models.FloatField(default=0.0, help_text="0 means full width")
     crop_height = models.FloatField(default=0.0, help_text="0 means full height")
+    crop_flipped = models.BooleanField(default=False, help_text="Which side of cut line to show")
 
     # Position offset for alignment
     offset_x = models.FloatField(default=0.0, help_text="X offset in pixels")

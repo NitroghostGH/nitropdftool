@@ -24,7 +24,7 @@ class SheetSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'project', 'name', 'pdf_file', 'page_number',
             'rendered_image', 'rendered_image_url', 'image_width', 'image_height',
-            'crop_x', 'crop_y', 'crop_width', 'crop_height',
+            'crop_x', 'crop_y', 'crop_width', 'crop_height', 'crop_flipped',
             'offset_x', 'offset_y', 'rotation', 'z_index',
             'join_marks', 'created_at'
         ]

@@ -680,7 +680,7 @@ function renderSheetsOnCanvas() {
                     const cutData = {
                         p1: { x: sheet.crop_x, y: sheet.crop_y },
                         p2: { x: sheet.crop_width, y: sheet.crop_height },
-                        flipped: false
+                        flipped: sheet.crop_flipped || false  // Use saved flipped state
                     };
                     sheetCutData[sheet.id] = cutData;
                     applyCutMaskWithDirection(img, cutData.p1, cutData.p2, cutData.flipped);
@@ -1918,8 +1918,6 @@ function applyCutMaskWithDirection(sheetObj, p1, p2, flipped) {
 
 async function saveCutData(sheetId, cutData) {
     try {
-        // Store cut data in the crop_x field as JSON string (temporary solution)
-        // A better solution would add a dedicated field for cut masks
         const response = await fetch(`/api/sheets/${sheetId}/`, {
             method: 'PATCH',
             headers: {
@@ -1929,12 +1927,13 @@ async function saveCutData(sheetId, cutData) {
             body: JSON.stringify({
                 crop_x: cutData.p1.x,
                 crop_y: cutData.p1.y,
-                crop_width: cutData.p2.x,  // Repurposing as p2.x
-                crop_height: cutData.p2.y   // Repurposing as p2.y
+                crop_width: cutData.p2.x,
+                crop_height: cutData.p2.y,
+                crop_flipped: cutData.flipped || false
             })
         });
         if (response.ok) {
-            console.log('Cut data saved');
+            console.log('Cut data saved (flipped:', cutData.flipped, ')');
         }
     } catch (error) {
         console.error('Error saving cut data:', error);
@@ -2014,6 +2013,9 @@ function flipSelectedSheetCut() {
 
     // Reapply with flipped direction
     applyCutMaskWithDirection(sheetObj, cutData.p1, cutData.p2, cutData.flipped);
+
+    // Save the flipped state to server
+    saveCutData(selectedSheet.id, cutData);
 }
 
 // Split Sheet Tool - splits a sheet into two independent pieces

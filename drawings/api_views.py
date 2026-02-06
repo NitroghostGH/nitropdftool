@@ -312,6 +312,7 @@ def split_sheet(request, pk):
         crop_y=p1['y'],
         crop_width=p2['x'],
         crop_height=p2['y'],
+        crop_flipped=True,  # Show opposite side from original
     )
 
     # Render the new sheet's image
