@@ -646,15 +646,30 @@ function renderAssetList() {
         container.appendChild(div);
     });
 
-    // Setup search filter
+    // Setup search filters (right sidebar)
     document.getElementById('asset-search').addEventListener('input', function(e) {
-        const query = e.target.value.toLowerCase();
-        document.querySelectorAll('.asset-item').forEach((item, index) => {
-            const asset = assets[index];
-            const matches = asset.asset_id.toLowerCase().includes(query) ||
-                          (asset.name && asset.name.toLowerCase().includes(query));
-            item.style.display = matches ? '' : 'none';
-        });
+        filterAssetList(e.target.value);
+        // Sync to left sidebar search
+        document.getElementById('asset-search-left').value = e.target.value;
+    });
+
+    // Left sidebar search
+    document.getElementById('asset-search-left').addEventListener('input', function(e) {
+        const query = e.target.value;
+        document.getElementById('asset-search').value = query;
+        filterAssetList(query);
+        if (query) showTab('assets');  // Auto-switch to assets tab
+    });
+}
+
+function filterAssetList(query) {
+    const q = (query || '').toLowerCase();
+    document.querySelectorAll('.asset-item').forEach((item, index) => {
+        const asset = assets[index];
+        if (!asset) return;
+        const matches = !q || asset.asset_id.toLowerCase().includes(q) ||
+                      (asset.name && asset.name.toLowerCase().includes(q));
+        item.style.display = matches ? '' : 'none';
     });
 }
 
@@ -1184,7 +1199,17 @@ function drawOriginMarker(x, y) {
 }
 
 // Asset Verification / Reference Point Calibration
-function showVerifyModal() {
+function toggleVerifyPanel() {
+    const panel = document.getElementById('verify-panel');
+    const isVisible = panel.style.display !== 'none';
+
+    if (isVisible) {
+        // Hide panel
+        panel.style.display = 'none';
+        setMode('pan');
+        return;
+    }
+
     if (assets.length === 0) {
         alert('No assets imported yet. Import a CSV first.');
         return;
@@ -1192,7 +1217,7 @@ function showVerifyModal() {
 
     // Populate the asset dropdown
     const select = document.getElementById('verify-asset-select');
-    select.innerHTML = '<option value="">-- Select an asset --</option>';
+    select.innerHTML = '<option value="">-- Select --</option>';
     assets.forEach(asset => {
         const opt = document.createElement('option');
         opt.value = asset.asset_id;
@@ -1210,7 +1235,7 @@ function showVerifyModal() {
     document.getElementById('verify-rotation-slider').value = assetRotationDeg;
     document.getElementById('verify-rotation-input').value = assetRotationDeg;
 
-    document.getElementById('verifyAssetsModal').style.display = 'block';
+    panel.style.display = 'block';
     setMode('verify-asset');
 
     // Show ref info when asset is selected
@@ -1239,16 +1264,6 @@ function updateVerifyRefInfo() {
     } else {
         infoDiv.style.display = 'none';
     }
-}
-
-function hideVerifyModal() {
-    document.getElementById('verifyAssetsModal').style.display = 'none';
-    // Remove verify marker if cancelling without applying
-    if (verifyRefMarker) {
-        canvas.remove(verifyRefMarker);
-        verifyRefMarker = null;
-    }
-    setMode('pan');
 }
 
 function handleVerifyClick(opt) {
@@ -1377,8 +1392,8 @@ async function applyVerification() {
     // Save to server
     await saveAssetCalibration();
 
-    // Close modal and refresh
-    document.getElementById('verifyAssetsModal').style.display = 'none';
+    // Close panel and refresh
+    document.getElementById('verify-panel').style.display = 'none';
     setMode('pan');
     refreshAssets();
 
@@ -1894,6 +1909,14 @@ async function importStepNext() {
     const preview = document.getElementById('import-csv-preview');
     preview.textContent = 'Detected columns: ' + importCsvHeaders.join(', ');
 
+    // Check localStorage for remembered mapping for these headers
+    const mappingKey = 'csvMapping_' + [...importCsvHeaders].sort().join('|');
+    let rememberedMapping = null;
+    try {
+        const saved = localStorage.getItem(mappingKey);
+        if (saved) rememberedMapping = JSON.parse(saved);
+    } catch (e) { /* ignore */ }
+
     // Populate dropdowns
     const roles = [
         { id: 'map-asset-id', role: 'asset_id', required: true },
@@ -1921,19 +1944,27 @@ async function importStepNext() {
             select.appendChild(opt);
         });
 
-        // Auto-match: check presets (ordered by priority from API)
-        const presetNames = importColumnPresets[role] || [];
+        // Priority 1: Use remembered mapping from localStorage
         let matched = false;
-        for (const presetName of presetNames) {
-            const match = importCsvHeaders.find(h => h.toLowerCase() === presetName.toLowerCase());
-            if (match) {
-                select.value = match;
-                matched = true;
-                break;
+        if (rememberedMapping && rememberedMapping[role] && importCsvHeaders.includes(rememberedMapping[role])) {
+            select.value = rememberedMapping[role];
+            matched = true;
+        }
+
+        // Priority 2: Check admin presets (ordered by priority from API)
+        if (!matched) {
+            const presetNames = importColumnPresets[role] || [];
+            for (const presetName of presetNames) {
+                const match = importCsvHeaders.find(h => h.toLowerCase() === presetName.toLowerCase());
+                if (match) {
+                    select.value = match;
+                    matched = true;
+                    break;
+                }
             }
         }
 
-        // If no preset matched, try exact case-insensitive match on role name
+        // Priority 3: Fallback to case-insensitive match on role name
         if (!matched) {
             const fallback = importCsvHeaders.find(h => h.toLowerCase() === role.toLowerCase());
             if (fallback) {
@@ -1941,6 +1972,10 @@ async function importStepNext() {
             }
         }
     });
+
+    if (rememberedMapping) {
+        preview.textContent += ' (using remembered mapping)';
+    }
 
     // Switch to step 2
     document.getElementById('import-step-1').style.display = 'none';
@@ -1993,6 +2028,12 @@ async function importWithMapping() {
 
         const result = await response.json();
         if (response.ok) {
+            // Save column mapping to localStorage for future imports with same headers
+            try {
+                const mappingKey = 'csvMapping_' + [...importCsvHeaders].sort().join('|');
+                localStorage.setItem(mappingKey, JSON.stringify(mapping));
+            } catch (e) { /* ignore storage errors */ }
+
             alert(`Import complete:\n${result.created} created\n${result.updated} updated\n${result.errors.length} errors`);
             hideImportModal();
             loadProjectData();

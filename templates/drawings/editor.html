@@ -390,13 +390,38 @@
 
         <div class="tool-section">
             <h4>Assets</h4>
+            <input type="text" id="asset-search-left" placeholder="Search assets..."
+                   style="width: 100%; padding: 0.3rem; border: 1px solid #ddd; border-radius: 4px; font-size: 0.85rem; margin-bottom: 0.5rem;">
             <div id="import-batches"></div>
             <button class="btn" style="width: 100%;" onclick="showImportModal()">
                 Import CSV
             </button>
-            <button class="btn" style="width: 100%; margin-top: 0.5rem;" onclick="showVerifyModal()">
+            <button class="tool-btn" style="margin-top: 0.5rem;" onclick="toggleVerifyPanel()">
                 Verify & Plot
             </button>
+            <div id="verify-panel" style="display: none; margin-top: 0.5rem; padding: 0.5rem; background: #f0f7ff; border: 1px solid #bee0ff; border-radius: 4px;">
+                <div style="margin-bottom: 0.5rem;">
+                    <label style="font-size: 0.8rem; color: #6c757d;">Reference Asset</label>
+                    <select id="verify-asset-select" style="width: 100%; padding: 0.3rem; border: 1px solid #ddd; border-radius: 4px; font-size: 0.85rem;">
+                        <option value="">-- Select --</option>
+                    </select>
+                </div>
+                <div id="verify-ref-info" style="display: none; margin-bottom: 0.5rem; padding: 0.4rem; background: #f8f9fa; border-radius: 4px; font-size: 0.8rem;">
+                    <strong>Coords:</strong> <span id="verify-ref-coords"></span><br>
+                    <span id="verify-ref-placed" style="color: #6c757d;">Click map to set location</span>
+                </div>
+                <div style="margin-bottom: 0.5rem;">
+                    <label style="font-size: 0.8rem; color: #6c757d;">Rotation</label>
+                    <div style="display: flex; gap: 0.5rem; align-items: center;">
+                        <input type="range" id="verify-rotation-slider" min="0" max="360" value="0" step="1" style="flex: 1;"
+                               oninput="onVerifyRotationChange(parseFloat(this.value))">
+                        <input type="number" id="verify-rotation-input" value="0" step="1"
+                               style="width: 55px; padding: 0.3rem; border: 1px solid #ddd; border-radius: 4px; font-size: 0.85rem;"
+                               onchange="onVerifyRotationChange(parseFloat(this.value) || 0)">
+                    </div>
+                </div>
+                <button class="btn btn-success" style="width: 100%; font-size: 0.85rem;" onclick="applyVerification()">Apply & Plot All</button>
+            </div>
             <div style="margin-top: 0.5rem;">
                 <label style="font-size: 0.85rem; color: #6c757d;">Asset Rotation</label>
                 <div style="display: flex; gap: 0.5rem; align-items: center;">
@@ -631,41 +656,6 @@
         <div style="display: flex; gap: 1rem; justify-content: flex-end;">
             <button type="button" class="btn" style="background: #6c757d;" onclick="hideCalibrateModal()">Cancel</button>
             <button type="button" class="btn btn-success" onclick="applyCalibration()">Apply</button>
-        </div>
-    </div>
-</div>
-
-<!-- Verify Assets Modal -->
-<div id="verifyAssetsModal" class="modal">
-    <div class="modal-content">
-        <h2 style="margin-bottom: 1rem;">Verify Asset Placement</h2>
-        <p class="text-muted" style="margin-bottom: 1rem;">
-            Select a reference asset and click on the drawing where it should be located.
-            Then adjust rotation until all assets align with the drawing.
-        </p>
-        <div class="form-group">
-            <label>Reference Asset</label>
-            <select id="verify-asset-select" style="width: 100%; padding: 0.4rem; border: 1px solid #ddd; border-radius: 4px;">
-                <option value="">-- Select an asset --</option>
-            </select>
-        </div>
-        <div id="verify-ref-info" style="display: none; margin-bottom: 1rem; padding: 0.5rem; background: #f8f9fa; border-radius: 4px; font-size: 0.9rem;">
-            <strong>Meter coords:</strong> <span id="verify-ref-coords"></span><br>
-            <span id="verify-ref-placed" style="color: #6c757d;">Click on the drawing to set the reference location</span>
-        </div>
-        <div class="form-group">
-            <label>Asset Rotation (degrees)</label>
-            <div style="display: flex; gap: 0.5rem; align-items: center;">
-                <input type="range" id="verify-rotation-slider" min="0" max="360" value="0" step="1" style="flex: 1;"
-                       oninput="onVerifyRotationChange(parseFloat(this.value))">
-                <input type="number" id="verify-rotation-input" value="0" step="1"
-                       style="width: 70px; padding: 0.4rem; border: 1px solid #ddd; border-radius: 4px;"
-                       onchange="onVerifyRotationChange(parseFloat(this.value) || 0)">
-            </div>
-        </div>
-        <div style="display: flex; gap: 1rem; justify-content: flex-end;">
-            <button type="button" class="btn" style="background: #6c757d;" onclick="hideVerifyModal()">Cancel</button>
-            <button type="button" class="btn btn-success" onclick="applyVerification()">Apply & Plot All</button>
         </div>
     </div>
 </div>
