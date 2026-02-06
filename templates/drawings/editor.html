@@ -300,6 +300,20 @@
             <button class="btn" style="width: 100%;" onclick="showImportModal()">
                 📥 Import CSV
             </button>
+            <button class="btn" style="width: 100%; margin-top: 0.5rem;" onclick="showVerifyModal()">
+                🎯 Verify & Plot Assets
+            </button>
+            <div style="margin-top: 0.5rem;">
+                <label style="font-size: 0.85rem; color: #6c757d;">Asset Rotation</label>
+                <div style="display: flex; gap: 0.5rem; align-items: center;">
+                    <input type="range" id="asset-rotation-slider" min="0" max="360" value="0" style="flex: 1;"
+                           oninput="setAssetRotation(parseFloat(this.value))">
+                    <input type="number" id="asset-rotation-input" value="0" step="1"
+                           style="width: 60px; padding: 0.4rem; border: 1px solid #ddd; border-radius: 4px;"
+                           onchange="setAssetRotation(parseFloat(this.value) || 0)">
+                    <span style="font-size: 0.85rem; color: #6c757d;">deg</span>
+                </div>
+            </div>
         </div>
 
         <div class="tool-section">
@@ -487,6 +501,41 @@
     </div>
 </div>
 
+<!-- Verify Assets Modal -->
+<div id="verifyAssetsModal" class="modal">
+    <div class="modal-content">
+        <h2 style="margin-bottom: 1rem;">Verify Asset Placement</h2>
+        <p class="text-muted" style="margin-bottom: 1rem;">
+            Select a reference asset and click on the drawing where it should be located.
+            Then adjust rotation until all assets align with the drawing.
+        </p>
+        <div class="form-group">
+            <label>Reference Asset</label>
+            <select id="verify-asset-select" style="width: 100%; padding: 0.4rem; border: 1px solid #ddd; border-radius: 4px;">
+                <option value="">-- Select an asset --</option>
+            </select>
+        </div>
+        <div id="verify-ref-info" style="display: none; margin-bottom: 1rem; padding: 0.5rem; background: #f8f9fa; border-radius: 4px; font-size: 0.9rem;">
+            <strong>Meter coords:</strong> <span id="verify-ref-coords"></span><br>
+            <span id="verify-ref-placed" style="color: #6c757d;">Click on the drawing to set the reference location</span>
+        </div>
+        <div class="form-group">
+            <label>Asset Rotation (degrees)</label>
+            <div style="display: flex; gap: 0.5rem; align-items: center;">
+                <input type="range" id="verify-rotation-slider" min="0" max="360" value="0" step="1" style="flex: 1;"
+                       oninput="onVerifyRotationChange(parseFloat(this.value))">
+                <input type="number" id="verify-rotation-input" value="0" step="1"
+                       style="width: 70px; padding: 0.4rem; border: 1px solid #ddd; border-radius: 4px;"
+                       onchange="onVerifyRotationChange(parseFloat(this.value) || 0)">
+            </div>
+        </div>
+        <div style="display: flex; gap: 1rem; justify-content: flex-end;">
+            <button type="button" class="btn" style="background: #6c757d;" onclick="hideVerifyModal()">Cancel</button>
+            <button type="button" class="btn btn-success" onclick="applyVerification()">Apply & Plot All</button>
+        </div>
+    </div>
+</div>
+
 {% csrf_token %}
 <script src="https://cdnjs.cloudflare.com/ajax/libs/fabric.js/5.3.1/fabric.min.js"></script>
 <script>
@@ -495,7 +544,11 @@
         pixels_per_meter: {{ project.pixels_per_meter }},
         origin_x: {{ project.origin_x }},
         origin_y: {{ project.origin_y }},
-        canvas_rotation: {{ project.canvas_rotation }}
+        canvas_rotation: {{ project.canvas_rotation }},
+        asset_rotation: {{ project.asset_rotation }},
+        ref_asset_id: '{{ project.ref_asset_id|escapejs }}',
+        ref_pixel_x: {{ project.ref_pixel_x }},
+        ref_pixel_y: {{ project.ref_pixel_y }}
     };
 </script>
 <script src="{% static 'js/canvas_editor.js' %}"></script>

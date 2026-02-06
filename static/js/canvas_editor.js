@@ -40,6 +40,12 @@ let cutStatsLabel = null;  // Fabric.Text showing angle/length while drawing
 let viewportRotation = 0;  // Will be loaded from PROJECT_DATA
 let currentZoomLevel = 1;  // Track zoom independently (canvas.getZoom() breaks with rotation)
 
+// Asset layer calibration state
+let assetRotationDeg = 0;       // Independent asset layer rotation (degrees)
+let refAssetId = '';             // Reference asset identifier
+let refPixelX = 0, refPixelY = 0; // Where reference was placed on canvas
+let verifyRefMarker = null;      // Canvas marker for reference point
+
 // Undo system
 const undoStack = [];
 const MAX_UNDO_STEPS = 50;
@@ -201,6 +207,14 @@ document.addEventListener('DOMContentLoaded', function() {
             updateRotationDisplay();
         }, 100);
     }
+
+    // Initialize asset calibration from project data
+    assetRotationDeg = PROJECT_DATA.asset_rotation || 0;
+    refAssetId = PROJECT_DATA.ref_asset_id || '';
+    refPixelX = PROJECT_DATA.ref_pixel_x || 0;
+    refPixelY = PROJECT_DATA.ref_pixel_y || 0;
+    document.getElementById('asset-rotation-slider').value = assetRotationDeg;
+    document.getElementById('asset-rotation-input').value = assetRotationDeg;
 });
 
 function initCanvas() {
@@ -275,6 +289,8 @@ function setupCanvasEvents() {
             handleCropClick(opt);
         } else if (currentMode === 'split') {
             handleSplitClick(opt);
+        } else if (currentMode === 'verify-asset') {
+            handleVerifyClick(opt);
         }
     });
 
@@ -509,6 +525,10 @@ function setMode(mode) {
         case 'origin':
             canvas.defaultCursor = 'crosshair';
             break;
+        case 'verify-asset':
+            canvas.defaultCursor = 'crosshair';
+            canvas.selection = false;
+            break;
     }
 
     // Update selectability of all sheet objects
@@ -544,6 +564,11 @@ async function loadProjectData() {
         renderAssetList();
         renderSheetsOnCanvas();
         renderAssetsOnCanvas();
+
+        // Restore reference point marker if configured
+        if (refAssetId && (refPixelX !== 0 || refPixelY !== 0)) {
+            drawVerifyRefMarker(refPixelX, refPixelY);
+        }
 
     } catch (error) {
         console.error('Error loading project data:', error);
@@ -716,12 +741,49 @@ function reorderSheetsByZIndex() {
     })));
 }
 
+/**
+ * Convert asset meter coordinates to pixel coordinates.
+ * If a reference asset is set, rotates around the reference point.
+ * Otherwise falls back to origin-based transform.
+ */
+function assetMeterToPixel(meterX, meterY) {
+    if (refAssetId) {
+        // Find the reference asset's meter coords
+        const refAsset = assets.find(a => a.asset_id === refAssetId);
+        if (refAsset) {
+            const refMeterX = refAsset.current_x;
+            const refMeterY = refAsset.current_y;
+
+            // Offset from reference in meters
+            const dmx = meterX - refMeterX;
+            const dmy = meterY - refMeterY;
+
+            // Rotate by asset layer rotation
+            const rad = assetRotationDeg * Math.PI / 180;
+            const cos = Math.cos(rad);
+            const sin = Math.sin(rad);
+            const rotX = dmx * cos - dmy * sin;
+            const rotY = dmx * sin + dmy * cos;
+
+            // Scale to pixels and offset from reference pixel position
+            return {
+                x: refPixelX + rotX * PROJECT_DATA.pixels_per_meter,
+                y: refPixelY + rotY * PROJECT_DATA.pixels_per_meter
+            };
+        }
+    }
+    // Fallback: origin-based transform
+    return {
+        x: PROJECT_DATA.origin_x + (meterX * PROJECT_DATA.pixels_per_meter),
+        y: PROJECT_DATA.origin_y + (meterY * PROJECT_DATA.pixels_per_meter)
+    };
+}
+
 function renderAssetsOnCanvas() {
     assets.forEach(asset => {
-        const pixelX = PROJECT_DATA.origin_x + (asset.current_x * PROJECT_DATA.pixels_per_meter);
-        const pixelY = PROJECT_DATA.origin_y + (asset.current_y * PROJECT_DATA.pixels_per_meter);
+        const pos = assetMeterToPixel(asset.current_x, asset.current_y);
 
-        const assetObj = createAssetShape(asset, pixelX, pixelY);
+        const assetObj = createAssetShape(asset, pos.x, pos.y);
         assetObj.assetData = asset;
         canvas.add(assetObj);
     });
@@ -1112,21 +1174,249 @@ function drawOriginMarker(x, y) {
     canvas.renderAll();
 }
 
+// Asset Verification / Reference Point Calibration
+function showVerifyModal() {
+    if (assets.length === 0) {
+        alert('No assets imported yet. Import a CSV first.');
+        return;
+    }
+
+    // Populate the asset dropdown
+    const select = document.getElementById('verify-asset-select');
+    select.innerHTML = '<option value="">-- Select an asset --</option>';
+    assets.forEach(asset => {
+        const opt = document.createElement('option');
+        opt.value = asset.asset_id;
+        opt.textContent = asset.asset_id + (asset.name ? ' - ' + asset.name : '');
+        select.appendChild(opt);
+    });
+
+    // Pre-select current reference if set
+    if (refAssetId) {
+        select.value = refAssetId;
+        updateVerifyRefInfo();
+    }
+
+    // Set rotation sliders to current value
+    document.getElementById('verify-rotation-slider').value = assetRotationDeg;
+    document.getElementById('verify-rotation-input').value = assetRotationDeg;
+
+    document.getElementById('verifyAssetsModal').style.display = 'block';
+    setMode('verify-asset');
+
+    // Show ref info when asset is selected
+    select.onchange = updateVerifyRefInfo;
+}
+
+function updateVerifyRefInfo() {
+    const select = document.getElementById('verify-asset-select');
+    const infoDiv = document.getElementById('verify-ref-info');
+    const coordsSpan = document.getElementById('verify-ref-coords');
+    const placedSpan = document.getElementById('verify-ref-placed');
+
+    if (select.value) {
+        const asset = assets.find(a => a.asset_id === select.value);
+        if (asset) {
+            infoDiv.style.display = 'block';
+            coordsSpan.textContent = `(${asset.current_x.toFixed(2)}m, ${asset.current_y.toFixed(2)}m)`;
+            if (refAssetId === select.value && (refPixelX !== 0 || refPixelY !== 0)) {
+                placedSpan.textContent = `Reference placed at pixel (${refPixelX.toFixed(0)}, ${refPixelY.toFixed(0)})`;
+                placedSpan.style.color = '#28a745';
+            } else {
+                placedSpan.textContent = 'Click on the drawing to set the reference location';
+                placedSpan.style.color = '#6c757d';
+            }
+        }
+    } else {
+        infoDiv.style.display = 'none';
+    }
+}
+
+function hideVerifyModal() {
+    document.getElementById('verifyAssetsModal').style.display = 'none';
+    // Remove verify marker if cancelling without applying
+    if (verifyRefMarker) {
+        canvas.remove(verifyRefMarker);
+        verifyRefMarker = null;
+    }
+    setMode('pan');
+}
+
+function handleVerifyClick(opt) {
+    const select = document.getElementById('verify-asset-select');
+    if (!select.value) {
+        alert('Please select a reference asset first.');
+        return;
+    }
+
+    const pointer = canvas.getPointer(opt.e);
+    refAssetId = select.value;
+    refPixelX = pointer.x;
+    refPixelY = pointer.y;
+
+    // Draw reference marker
+    drawVerifyRefMarker(pointer.x, pointer.y);
+
+    // Update info display
+    const placedSpan = document.getElementById('verify-ref-placed');
+    placedSpan.textContent = `Reference placed at pixel (${refPixelX.toFixed(0)}, ${refPixelY.toFixed(0)})`;
+    placedSpan.style.color = '#28a745';
+
+    // Live preview: re-render assets with current rotation
+    refreshAssets();
+}
+
+function drawVerifyRefMarker(x, y) {
+    // Remove existing marker
+    if (verifyRefMarker) {
+        canvas.remove(verifyRefMarker);
+    }
+
+    // Draw a prominent crosshair/target marker
+    verifyRefMarker = new fabric.Group([
+        new fabric.Line([x - 15, y, x + 15, y], { stroke: '#e74c3c', strokeWidth: 2 }),
+        new fabric.Line([x, y - 15, x, y + 15], { stroke: '#e74c3c', strokeWidth: 2 }),
+        new fabric.Circle({ radius: 10, fill: 'transparent', stroke: '#e74c3c', strokeWidth: 2, left: x, top: y, originX: 'center', originY: 'center' }),
+        new fabric.Circle({ radius: 3, fill: '#e74c3c', left: x, top: y, originX: 'center', originY: 'center' })
+    ], { selectable: false, evented: false, verifyMarker: true });
+
+    canvas.add(verifyRefMarker);
+    canvas.bringToFront(verifyRefMarker);
+    canvas.renderAll();
+}
+
+function onVerifyRotationChange(deg) {
+    assetRotationDeg = deg;
+    document.getElementById('verify-rotation-slider').value = deg;
+    document.getElementById('verify-rotation-input').value = deg;
+    document.getElementById('asset-rotation-slider').value = deg;
+    document.getElementById('asset-rotation-input').value = deg;
+
+    // Live preview if reference is set
+    if (refAssetId && (refPixelX !== 0 || refPixelY !== 0)) {
+        refreshAssets();
+    }
+}
+
+function setAssetRotation(deg) {
+    assetRotationDeg = deg;
+    document.getElementById('asset-rotation-slider').value = deg;
+    document.getElementById('asset-rotation-input').value = deg;
+    document.getElementById('verify-rotation-slider').value = deg;
+    document.getElementById('verify-rotation-input').value = deg;
+
+    // Live preview if reference is set
+    if (refAssetId) {
+        refreshAssets();
+    }
+
+    // Debounced save
+    debouncedSaveAssetCalibration();
+}
+
+let assetCalibrationSaveTimeout = null;
+function debouncedSaveAssetCalibration() {
+    if (assetCalibrationSaveTimeout) {
+        clearTimeout(assetCalibrationSaveTimeout);
+    }
+    assetCalibrationSaveTimeout = setTimeout(saveAssetCalibration, 500);
+}
+
+async function saveAssetCalibration() {
+    try {
+        const response = await fetch(`/api/projects/${PROJECT_ID}/calibrate/`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': getCSRFToken()
+            },
+            body: JSON.stringify({
+                asset_rotation: assetRotationDeg,
+                ref_asset_id: refAssetId,
+                ref_pixel_x: refPixelX,
+                ref_pixel_y: refPixelY
+            })
+        });
+
+        if (response.ok) {
+            const result = await response.json();
+            PROJECT_DATA.asset_rotation = result.asset_rotation;
+            PROJECT_DATA.ref_asset_id = result.ref_asset_id;
+            PROJECT_DATA.ref_pixel_x = result.ref_pixel_x;
+            PROJECT_DATA.ref_pixel_y = result.ref_pixel_y;
+            console.log('Asset calibration saved');
+        }
+    } catch (error) {
+        console.error('Error saving asset calibration:', error);
+    }
+}
+
+async function applyVerification() {
+    const select = document.getElementById('verify-asset-select');
+    if (!select.value) {
+        alert('Please select a reference asset.');
+        return;
+    }
+
+    if (refPixelX === 0 && refPixelY === 0) {
+        alert('Please click on the drawing to set the reference location.');
+        return;
+    }
+
+    refAssetId = select.value;
+
+    // Save to server
+    await saveAssetCalibration();
+
+    // Close modal and refresh
+    document.getElementById('verifyAssetsModal').style.display = 'none';
+    setMode('pan');
+    refreshAssets();
+
+    // Keep the marker visible (don't remove it)
+    console.log('Asset verification applied: ref=' + refAssetId +
+        ', pixel=(' + refPixelX.toFixed(0) + ',' + refPixelY.toFixed(0) + ')' +
+        ', rotation=' + assetRotationDeg + '°');
+}
+
 // Asset Position Updates
+/**
+ * Convert pixel coordinates back to meter coordinates (inverse of assetMeterToPixel).
+ */
+function pixelToAssetMeter(pixelX, pixelY) {
+    if (refAssetId) {
+        const refAsset = assets.find(a => a.asset_id === refAssetId);
+        if (refAsset) {
+            const dpx = pixelX - refPixelX;
+            const dpy = pixelY - refPixelY;
+            const dmx = dpx / PROJECT_DATA.pixels_per_meter;
+            const dmy = dpy / PROJECT_DATA.pixels_per_meter;
+            // Inverse rotation
+            const rad = -assetRotationDeg * Math.PI / 180;
+            const cos = Math.cos(rad);
+            const sin = Math.sin(rad);
+            return {
+                x: refAsset.current_x + dmx * cos - dmy * sin,
+                y: refAsset.current_y + dmx * sin + dmy * cos
+            };
+        }
+    }
+    return {
+        x: (pixelX - PROJECT_DATA.origin_x) / PROJECT_DATA.pixels_per_meter,
+        y: (pixelY - PROJECT_DATA.origin_y) / PROJECT_DATA.pixels_per_meter
+    };
+}
+
 function updateAssetPositionFromCanvas(obj) {
     if (!obj.assetData) return;
 
     // Convert pixel position back to meters
-    const pixelX = obj.left;
-    const pixelY = obj.top;
-
-    const meterX = (pixelX - PROJECT_DATA.origin_x) / PROJECT_DATA.pixels_per_meter;
-    const meterY = (pixelY - PROJECT_DATA.origin_y) / PROJECT_DATA.pixels_per_meter;
+    const pos = pixelToAssetMeter(obj.left, obj.top);
 
     // Update the property panel if this asset is selected
     if (selectedAsset && selectedAsset.id === obj.assetData.id) {
-        document.getElementById('asset-adj-x').value = meterX.toFixed(3);
-        document.getElementById('asset-adj-y').value = meterY.toFixed(3);
+        document.getElementById('asset-adj-x').value = pos.x.toFixed(3);
+        document.getElementById('asset-adj-y').value = pos.y.toFixed(3);
     }
 }
 
@@ -1511,13 +1801,10 @@ async function saveViewportRotation() {
 
 function updateCursorPosition(opt) {
     const pointer = canvas.getPointer(opt.e);
-
-    // Convert to meters if calibrated
-    const meterX = (pointer.x - PROJECT_DATA.origin_x) / PROJECT_DATA.pixels_per_meter;
-    const meterY = (pointer.y - PROJECT_DATA.origin_y) / PROJECT_DATA.pixels_per_meter;
+    const pos = pixelToAssetMeter(pointer.x, pointer.y);
 
     document.getElementById('cursor-position').textContent =
-        `${meterX.toFixed(2)}m, ${meterY.toFixed(2)}m`;
+        `${pos.x.toFixed(2)}m, ${pos.y.toFixed(2)}m`;
 }
 
 // Tab Switching

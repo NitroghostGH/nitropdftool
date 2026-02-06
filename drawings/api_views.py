@@ -315,13 +315,39 @@ def calibrate_project(request, pk):
         except ValueError as e:
             return Response({'error': str(e)}, status=400)
 
+    # Asset layer calibration
+    asset_rotation = request.data.get('asset_rotation')
+    if asset_rotation is not None:
+        try:
+            project.asset_rotation = _parse_finite_float(asset_rotation, 'asset_rotation')
+        except ValueError as e:
+            return Response({'error': str(e)}, status=400)
+
+    ref_asset_id = request.data.get('ref_asset_id')
+    if ref_asset_id is not None:
+        project.ref_asset_id = str(ref_asset_id)[:100]
+
+    try:
+        ref_pixel_x = request.data.get('ref_pixel_x')
+        ref_pixel_y = request.data.get('ref_pixel_y')
+        if ref_pixel_x is not None:
+            project.ref_pixel_x = _parse_finite_float(ref_pixel_x, 'ref_pixel_x')
+        if ref_pixel_y is not None:
+            project.ref_pixel_y = _parse_finite_float(ref_pixel_y, 'ref_pixel_y')
+    except ValueError as e:
+        return Response({'error': str(e)}, status=400)
+
     project.save()
 
     return Response({
         'pixels_per_meter': project.pixels_per_meter,
         'origin_x': project.origin_x,
         'origin_y': project.origin_y,
-        'canvas_rotation': project.canvas_rotation
+        'canvas_rotation': project.canvas_rotation,
+        'asset_rotation': project.asset_rotation,
+        'ref_asset_id': project.ref_asset_id,
+        'ref_pixel_x': project.ref_pixel_x,
+        'ref_pixel_y': project.ref_pixel_y,
     })
 
 

@@ -19,6 +19,12 @@ class Project(models.Model):
     # Viewport rotation (for aligning drawings with different orientations)
     canvas_rotation = models.FloatField(default=0.0, help_text="Viewport rotation in degrees")
 
+    # Asset layer calibration (independent of viewport)
+    asset_rotation = models.FloatField(default=0.0, help_text="Asset layer rotation in degrees")
+    ref_asset_id = models.CharField(max_length=100, blank=True, default='', help_text="Asset ID of the reference point asset")
+    ref_pixel_x = models.FloatField(default=0.0, help_text="Pixel X where reference asset was placed on canvas")
+    ref_pixel_y = models.FloatField(default=0.0, help_text="Pixel Y where reference asset was placed on canvas")
+
     class Meta:
         ordering = ['-created_at']
 
