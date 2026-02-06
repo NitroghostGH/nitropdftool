@@ -37,6 +37,7 @@ let sheetCutData = {};  // Store cut data per sheet for flipping
 
 // Viewport rotation state
 let viewportRotation = 0;  // Will be loaded from PROJECT_DATA
+let currentZoomLevel = 1;  // Track zoom independently (canvas.getZoom() breaks with rotation)
 
 // Undo system
 const undoStack = [];
@@ -313,18 +314,20 @@ function setupCanvasEvents() {
 
     canvas.on('mouse:wheel', function(opt) {
         const delta = opt.e.deltaY;
-        let zoom = canvas.getZoom();
+        const oldZoom = currentZoomLevel;
+        let zoom = oldZoom;
         zoom *= 0.999 ** delta;
         if (zoom > 5) zoom = 5;
         if (zoom < 0.1) zoom = 0.1;
+        currentZoomLevel = zoom;
 
         // Zoom to point while preserving rotation
         const point = { x: opt.e.offsetX, y: opt.e.offsetY };
         const vpt = canvas.viewportTransform.slice();
 
-        // Calculate the point in canvas coordinates before zoom
-        const beforeX = (point.x - vpt[4]) / canvas.getZoom();
-        const beforeY = (point.y - vpt[5]) / canvas.getZoom();
+        // Calculate the point in canvas coordinates before zoom (use old zoom)
+        const beforeX = (point.x - vpt[4]) / oldZoom;
+        const beforeY = (point.y - vpt[5]) / oldZoom;
 
         // Apply new zoom with rotation
         const angleRad = viewportRotation * Math.PI / 180;
@@ -1315,14 +1318,14 @@ function toggleSheetVisibility(sheetId, visible) {
 
 // Zoom Controls
 function zoomIn() {
-    let zoom = canvas.getZoom() * 1.2;
+    let zoom = currentZoomLevel * 1.2;
     if (zoom > 5) zoom = 5;
     setZoomPreservingRotation(zoom);
     updateZoomDisplay();
 }
 
 function zoomOut() {
-    let zoom = canvas.getZoom() / 1.2;
+    let zoom = currentZoomLevel / 1.2;
     if (zoom < 0.1) zoom = 0.1;
     setZoomPreservingRotation(zoom);
     updateZoomDisplay();
@@ -1333,6 +1336,7 @@ function zoomOut() {
  * @param {number} zoom - New zoom level
  */
 function setZoomPreservingRotation(zoom) {
+    currentZoomLevel = zoom;
     const angleRad = viewportRotation * Math.PI / 180;
     const cos = Math.cos(angleRad);
     const sin = Math.sin(angleRad);
@@ -1366,15 +1370,25 @@ function zoomFit() {
     const contentWidth = maxX - minX;
     const contentHeight = maxY - minY;
 
+    // Guard against zero-dimension content (all objects at same point)
+    if (contentWidth < 1 || contentHeight < 1) {
+        setZoomPreservingRotation(1);
+        canvas.absolutePan({ x: 0, y: 0 });
+        applyViewportRotation();
+        updateZoomDisplay();
+        return;
+    }
+
     const zoomX = canvas.width / contentWidth * 0.9;
     const zoomY = canvas.height / contentHeight * 0.9;
     const zoom = Math.min(zoomX, zoomY, 1);
 
-    canvas.setZoom(zoom);
+    setZoomPreservingRotation(zoom);
     canvas.absolutePan({
         x: minX * zoom - (canvas.width - contentWidth * zoom) / 2,
         y: minY * zoom - (canvas.height - contentHeight * zoom) / 2
     });
+    applyViewportRotation();
 
     updateZoomDisplay();
 }
@@ -1387,7 +1401,7 @@ function resetView() {
 }
 
 function updateZoomDisplay() {
-    const zoom = Math.round(canvas.getZoom() * 100);
+    const zoom = Math.round(currentZoomLevel * 100);
     document.getElementById('zoom-level').textContent = zoom;
     document.getElementById('zoom-display').textContent = zoom + '%';
 }
@@ -1423,7 +1437,7 @@ function applyViewportRotation() {
     const sin = Math.sin(angleRad);
 
     const vpt = canvas.viewportTransform;
-    const currentZoom = canvas.getZoom();
+    const currentZoom = currentZoomLevel;
 
     // Get current pan position
     const panX = vpt[4];
@@ -1779,10 +1793,16 @@ function applyCutMask(sheetObj, p1, p2) {
         previousCutData: previousCuts
     });
 
-    // Append new cut to existing array
+    // Convert canvas-space coordinates to sheet-local coordinates before storing.
+    // This ensures cuts survive reload regardless of the sheet's canvas position.
+    const invertedMatrix = fabric.util.invertTransform(sheetObj.calcTransformMatrix());
+    const localP1 = fabric.util.transformPoint(new fabric.Point(p1.x, p1.y), invertedMatrix);
+    const localP2 = fabric.util.transformPoint(new fabric.Point(p2.x, p2.y), invertedMatrix);
+
+    // Append new cut to existing array (in local/sheet-relative coordinates)
     const newCut = {
-        p1: { x: p1.x, y: p1.y },
-        p2: { x: p2.x, y: p2.y },
+        p1: { x: localP1.x, y: localP1.y },
+        p2: { x: localP2.x, y: localP2.y },
         flipped: false
     };
 
@@ -1816,7 +1836,11 @@ function clipPolygonByEdge(subjectPolygon, edgeP1, edgeP2) {
     function intersection(a, b) {
         const ca = cross(a);
         const cb = cross(b);
-        const t = ca / (ca - cb);
+        const denom = ca - cb;
+        if (Math.abs(denom) < 1e-10) {
+            return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+        }
+        const t = ca / denom;
         return {
             x: a.x + t * (b.x - a.x),
             y: a.y + t * (b.y - a.y)
@@ -1859,16 +1883,10 @@ function computeMultiCutPolygon(sheetObj, cuts) {
         { x: -imgWidth / 2 - padding, y:  imgHeight / 2 + padding }
     ];
 
-    const toLocal = (canvasX, canvasY) => {
-        const point = new fabric.Point(canvasX, canvasY);
-        const invertedMatrix = fabric.util.invertTransform(sheetObj.calcTransformMatrix());
-        const transformed = fabric.util.transformPoint(point, invertedMatrix);
-        return { x: transformed.x, y: transformed.y };
-    };
-
+    // Cut coordinates are already in sheet-local space (converted at draw/split time)
     for (const cut of cuts) {
-        const localP1 = toLocal(cut.p1.x, cut.p1.y);
-        const localP2 = toLocal(cut.p2.x, cut.p2.y);
+        const localP1 = { x: cut.p1.x, y: cut.p1.y };
+        const localP2 = { x: cut.p2.x, y: cut.p2.y };
 
         const dx = localP2.x - localP1.x;
         const dy = localP2.y - localP1.y;
@@ -2124,7 +2142,12 @@ async function handleSplitEnd(opt) {
     const lineLength = Math.sqrt(dx * dx + dy * dy);
 
     if (lineLength > 20) {
-        // Call API to split the sheet
+        // Convert canvas-space coords to sheet-local coords before sending/storing
+        const invertedMatrix = fabric.util.invertTransform(splitTargetSheet.calcTransformMatrix());
+        const localP1 = fabric.util.transformPoint(new fabric.Point(splitLineStart.x, splitLineStart.y), invertedMatrix);
+        const localP2 = fabric.util.transformPoint(new fabric.Point(pointer.x, pointer.y), invertedMatrix);
+
+        // Call API to split the sheet (send local coordinates)
         try {
             const response = await fetch(`/api/sheets/${splitTargetSheet.sheetData.id}/split/`, {
                 method: 'POST',
@@ -2133,8 +2156,8 @@ async function handleSplitEnd(opt) {
                     'X-CSRFToken': getCSRFToken()
                 },
                 body: JSON.stringify({
-                    p1: { x: splitLineStart.x, y: splitLineStart.y },
-                    p2: { x: pointer.x, y: pointer.y }
+                    p1: { x: localP1.x, y: localP1.y },
+                    p2: { x: localP2.x, y: localP2.y }
                 })
             });
 
@@ -2142,14 +2165,14 @@ async function handleSplitEnd(opt) {
                 const result = await response.json();
                 console.log('Sheet split successfully:', result);
 
-                // Append cut to original sheet's existing cuts
+                // Append cut to original sheet's existing cuts (local coordinates)
                 const originalId = splitTargetSheet.sheetData.id;
                 if (!sheetCutData[originalId]) {
                     sheetCutData[originalId] = [];
                 }
                 sheetCutData[originalId].push({
-                    p1: { x: splitLineStart.x, y: splitLineStart.y },
-                    p2: { x: pointer.x, y: pointer.y },
+                    p1: { x: localP1.x, y: localP1.y },
+                    p2: { x: localP2.x, y: localP2.y },
                     flipped: false
                 });
                 applyAllCuts(splitTargetSheet, sheetCutData[originalId]);
