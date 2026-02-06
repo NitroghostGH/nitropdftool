@@ -1,7 +1,7 @@
 """Django admin configuration for drawings app."""
 from django.contrib import admin
 from django.utils.html import format_html
-from .models import Project, Sheet, JoinMark, AssetType, Asset, AdjustmentLog, ColumnPreset
+from .models import Project, Sheet, JoinMark, AssetType, Asset, AdjustmentLog, ColumnPreset, ImportBatch
 
 
 @admin.register(AssetType)
@@ -123,3 +123,10 @@ class ColumnPresetAdmin(admin.ModelAdmin):
     list_filter = ['role']
     list_editable = ['priority']
     search_fields = ['column_name']
+
+
+@admin.register(ImportBatch)
+class ImportBatchAdmin(admin.ModelAdmin):
+    list_display = ['filename', 'project', 'asset_count', 'created_at']
+    list_filter = ['project']
+    search_fields = ['filename']

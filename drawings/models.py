@@ -139,10 +139,25 @@ class AssetType(models.Model):
         return self.name
 
 
+class ImportBatch(models.Model):
+    """A batch of assets imported from a single CSV file."""
+    project = models.ForeignKey(Project, on_delete=models.CASCADE, related_name='import_batches')
+    filename = models.CharField(max_length=255)
+    created_at = models.DateTimeField(auto_now_add=True)
+    asset_count = models.PositiveIntegerField(default=0)
+
+    class Meta:
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f"{self.filename} ({self.asset_count} assets)"
+
+
 class Asset(models.Model):
     """An asset with coordinates to be plotted on the drawing."""
     project = models.ForeignKey(Project, on_delete=models.CASCADE, related_name='assets')
     asset_type = models.ForeignKey(AssetType, on_delete=models.PROTECT, related_name='assets')
+    import_batch = models.ForeignKey('ImportBatch', on_delete=models.SET_NULL, null=True, blank=True, related_name='assets')
 
     # Identifier from source data
     asset_id = models.CharField(max_length=100)

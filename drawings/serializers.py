@@ -1,6 +1,6 @@
 """DRF Serializers for drawings app."""
 from rest_framework import serializers
-from .models import Project, Sheet, JoinMark, AssetType, Asset, AdjustmentLog
+from .models import Project, Sheet, JoinMark, AssetType, Asset, AdjustmentLog, ImportBatch
 
 
 class AssetTypeSerializer(serializers.ModelSerializer):
@@ -53,11 +53,19 @@ class SheetSerializer(serializers.ModelSerializer):
         return None
 
 
+class ImportBatchSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = ImportBatch
+        fields = ['id', 'project', 'filename', 'asset_count', 'created_at']
+        read_only_fields = ['project']
+
+
 class AssetSerializer(serializers.ModelSerializer):
     asset_type_data = AssetTypeSerializer(source='asset_type', read_only=True)
     current_x = serializers.FloatField(read_only=True)
     current_y = serializers.FloatField(read_only=True)
     delta_distance = serializers.FloatField(read_only=True)
+    import_batch_name = serializers.CharField(source='import_batch.filename', read_only=True, default=None)
 
     class Meta:
         model = Asset
@@ -65,6 +73,7 @@ class AssetSerializer(serializers.ModelSerializer):
             'id', 'project', 'asset_type', 'asset_type_data', 'asset_id', 'name',
             'original_x', 'original_y', 'adjusted_x', 'adjusted_y',
             'current_x', 'current_y', 'is_adjusted', 'delta_distance',
+            'import_batch', 'import_batch_name',
             'metadata', 'created_at', 'updated_at'
         ]
         read_only_fields = ['project', 'is_adjusted']

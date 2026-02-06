@@ -9,12 +9,13 @@ from rest_framework import generics, status
 from rest_framework.decorators import api_view
 from rest_framework.response import Response
 
-from .models import Project, Sheet, Asset, AdjustmentLog, AssetType, ColumnPreset
+from .models import Project, Sheet, Asset, AdjustmentLog, AssetType, ColumnPreset, ImportBatch
 
 logger = logging.getLogger(__name__)
 from .serializers import (
     ProjectSerializer, ProjectListSerializer,
-    SheetSerializer, AssetSerializer, AdjustmentLogSerializer
+    SheetSerializer, AssetSerializer, AdjustmentLogSerializer,
+    ImportBatchSerializer
 )
 from .services.pdf_processor import render_pdf_page, get_pdf_page_count
 from .services.csv_importer import import_assets_from_csv
@@ -201,7 +202,7 @@ def import_csv(request, project_pk):
             return Response({'error': 'Invalid column_mapping JSON'}, status=400)
 
     try:
-        result = import_assets_from_csv(project, csv_file, column_mapping=column_mapping)
+        result = import_assets_from_csv(project, csv_file, column_mapping=column_mapping, filename=csv_file.name)
         return Response(result)
     except Exception as e:
         logger.error("CSV import failed for project %d: %s", project_pk, e)
@@ -277,6 +278,25 @@ def column_presets(request):
     for preset in presets:
         grouped.setdefault(preset.role, []).append(preset.column_name)
     return Response(grouped)
+
+
+@api_view(['GET'])
+def import_batch_list(request, project_pk):
+    """List import batches for a project."""
+    batches = ImportBatch.objects.filter(project_id=project_pk)
+    serializer = ImportBatchSerializer(batches, many=True)
+    return Response(serializer.data)
+
+
+@api_view(['DELETE'])
+def import_batch_delete(request, pk):
+    """Delete an import batch and all its assets."""
+    batch = get_object_or_404(ImportBatch, pk=pk)
+    asset_count = batch.assets.count()
+    batch.assets.all().delete()
+    batch.delete()
+    logger.info("Deleted import batch %d (%d assets)", pk, asset_count)
+    return Response(status=status.HTTP_204_NO_CONTENT)
 
 
 def _parse_finite_float(value, name):

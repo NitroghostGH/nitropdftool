@@ -3,7 +3,7 @@ import csv
 import io
 import logging
 from django.db import transaction
-from ..models import Asset, AssetType
+from ..models import Asset, AssetType, ImportBatch
 
 logger = logging.getLogger(__name__)
 
@@ -17,7 +17,7 @@ DEFAULT_MAPPING = {
 }
 
 
-def import_assets_from_csv(project, csv_file, column_mapping=None):
+def import_assets_from_csv(project, csv_file, column_mapping=None, filename=None):
     """
     Import assets from a CSV file into a project.
 
@@ -26,6 +26,7 @@ def import_assets_from_csv(project, csv_file, column_mapping=None):
         csv_file: Uploaded file object
         column_mapping: Optional dict mapping roles to CSV column names, e.g.
             {'asset_id': 'TN', 'asset_type': 'asset_type', 'x': 'Easting', 'y': 'Northing'}
+        filename: Original filename for batch tracking
 
     Returns:
         dict with import results
@@ -70,6 +71,14 @@ def import_assets_from_csv(project, csv_file, column_mapping=None):
     col_name = mapping.get('name', '')
 
     with transaction.atomic():
+        # Create import batch for tracking
+        batch_filename = filename or getattr(csv_file, 'name', 'unknown.csv')
+        batch = ImportBatch.objects.create(
+            project=project,
+            filename=batch_filename,
+            asset_count=0
+        )
+
         for row_num, row in enumerate(reader, start=2):  # Start at 2 (1-indexed + header)
             try:
                 # Extract fields using mapped column names
@@ -122,6 +131,7 @@ def import_assets_from_csv(project, csv_file, column_mapping=None):
                         'original_x': x,
                         'original_y': y,
                         'metadata': metadata,
+                        'import_batch': batch,
                     }
                 )
 
@@ -139,6 +149,10 @@ def import_assets_from_csv(project, csv_file, column_mapping=None):
 
             except Exception as e:
                 results['errors'].append(f"Row {row_num}: {str(e)}")
+
+        # Update batch asset count
+        batch.asset_count = results['created'] + results['updated']
+        batch.save(update_fields=['asset_count'])
 
     logger.info("CSV import for project %d: %d created, %d updated, %d errors",
                 project.pk, results['created'], results['updated'], len(results['errors']))

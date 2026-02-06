@@ -564,6 +564,7 @@ async function loadProjectData() {
         renderAssetList();
         renderSheetsOnCanvas();
         renderAssetsOnCanvas();
+        renderImportBatches();
 
         // Restore reference point marker if configured
         if (refAssetId && (refPixelX !== 0 || refPixelY !== 0)) {
@@ -615,6 +616,14 @@ function renderAssetList() {
     assets.forEach(asset => {
         const div = document.createElement('div');
         div.className = 'asset-item' + (asset.is_adjusted ? ' adjusted' : '');
+
+        // Delete button
+        const delBtn = document.createElement('button');
+        delBtn.className = 'asset-delete-btn';
+        delBtn.textContent = '\u00D7';
+        delBtn.title = 'Delete asset';
+        delBtn.addEventListener('click', (e) => { e.stopPropagation(); deleteAsset(asset.id, asset.asset_id); });
+        div.appendChild(delBtn);
 
         // Security: Use DOM methods instead of innerHTML to prevent XSS
         const strong = document.createElement('strong');
@@ -2712,11 +2721,136 @@ async function handleSplitEnd(opt) {
     removeCutStats();
 }
 
-// Close modals on outside click
+// Close modals on outside click (but not while in verify-asset mode)
 document.querySelectorAll('.modal').forEach(modal => {
     modal.addEventListener('click', function(e) {
-        if (e.target === this) {
+        if (e.target === this && currentMode !== 'verify-asset') {
             this.style.display = 'none';
         }
     });
 });
+
+// ==================== Collapsible Sidebars ====================
+
+function toggleLeftSidebar() {
+    const sidebar = document.getElementById('sidebar-left');
+    const btn = sidebar.querySelector('.sidebar-toggle');
+    sidebar.classList.toggle('collapsed');
+    btn.innerHTML = sidebar.classList.contains('collapsed') ? '&raquo;' : '&laquo;';
+    // Resize canvas after transition
+    setTimeout(resizeCanvasToFit, 220);
+}
+
+function toggleRightSidebar() {
+    const sidebar = document.getElementById('sidebar-right');
+    const btn = document.querySelector('.right-toggle-btn');
+    sidebar.classList.toggle('collapsed');
+    btn.innerHTML = sidebar.classList.contains('collapsed') ? '&laquo;' : '&raquo;';
+    // Resize canvas after transition
+    setTimeout(resizeCanvasToFit, 220);
+}
+
+function resizeCanvasToFit() {
+    const container = document.getElementById('canvas-container');
+    if (container && canvas) {
+        const rect = container.getBoundingClientRect();
+        canvas.setDimensions({ width: rect.width, height: rect.height });
+        canvas.renderAll();
+    }
+}
+
+// ==================== Import Batches ====================
+
+async function renderImportBatches() {
+    const container = document.getElementById('import-batches');
+    if (!container) return;
+
+    try {
+        const resp = await fetch(`/api/projects/${PROJECT_ID}/import-batches/`);
+        if (!resp.ok) return;
+        const batches = await resp.json();
+
+        container.innerHTML = '';
+        if (batches.length === 0) return;
+
+        batches.forEach(batch => {
+            const div = document.createElement('div');
+            div.className = 'batch-item';
+
+            const header = document.createElement('div');
+            header.className = 'batch-header';
+
+            const nameSpan = document.createElement('span');
+            nameSpan.className = 'batch-name';
+            nameSpan.textContent = batch.filename;
+            nameSpan.title = batch.filename;
+
+            const countSpan = document.createElement('span');
+            countSpan.className = 'batch-count';
+            countSpan.textContent = `${batch.asset_count}`;
+
+            const delBtn = document.createElement('button');
+            delBtn.className = 'batch-delete-btn';
+            delBtn.textContent = '\u00D7';
+            delBtn.title = 'Delete this batch and its assets';
+            delBtn.addEventListener('click', () => deleteImportBatch(batch.id, batch.filename));
+
+            header.appendChild(nameSpan);
+            header.appendChild(countSpan);
+            header.appendChild(delBtn);
+            div.appendChild(header);
+            container.appendChild(div);
+        });
+    } catch (err) {
+        console.error('Error loading import batches:', err);
+    }
+}
+
+async function deleteImportBatch(batchId, filename) {
+    if (!confirm(`Delete batch "${filename}" and all its assets?`)) return;
+
+    try {
+        const resp = await fetch(`/api/import-batches/${batchId}/`, {
+            method: 'DELETE',
+            headers: { 'X-CSRFToken': getCSRFToken() }
+        });
+        if (!resp.ok) {
+            const data = await resp.json().catch(() => ({}));
+            alert(data.error || 'Failed to delete batch');
+            return;
+        }
+        // Reload assets and batch list
+        const assetsResp = await fetch(`/api/projects/${PROJECT_ID}/assets/`);
+        assets = await assetsResp.json();
+        renderAssetList();
+        renderAssetsOnCanvas();
+        renderImportBatches();
+    } catch (err) {
+        console.error('Error deleting batch:', err);
+        alert('Error deleting batch');
+    }
+}
+
+async function deleteAsset(assetId, assetLabel) {
+    if (!confirm(`Delete asset "${assetLabel}"?`)) return;
+
+    try {
+        const resp = await fetch(`/api/assets/${assetId}/`, {
+            method: 'DELETE',
+            headers: { 'X-CSRFToken': getCSRFToken() }
+        });
+        if (!resp.ok) {
+            alert('Failed to delete asset');
+            return;
+        }
+        // Reload assets
+        const assetsResp = await fetch(`/api/projects/${PROJECT_ID}/assets/`);
+        assets = await assetsResp.json();
+        renderAssetList();
+        renderAssetsOnCanvas();
+        renderImportBatches();
+    } catch (err) {
+        console.error('Error deleting asset:', err);
+        alert('Error deleting asset');
+    }
+}

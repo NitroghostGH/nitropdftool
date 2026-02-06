@@ -22,6 +22,10 @@ urlpatterns = [
     path('projects/<int:project_pk>/import-csv/', api_views.import_csv, name='import-csv'),
     path('column-presets/', api_views.column_presets, name='column-presets'),
 
+    # Import Batches
+    path('projects/<int:project_pk>/import-batches/', api_views.import_batch_list, name='import-batch-list'),
+    path('import-batches/<int:pk>/', api_views.import_batch_delete, name='import-batch-delete'),
+
     # Export
     path('projects/<int:project_pk>/export/', api_views.export_project, name='export-project'),
     path('projects/<int:project_pk>/adjustment-report/', api_views.adjustment_report, name='adjustment-report'),
