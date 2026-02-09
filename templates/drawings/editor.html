@@ -60,12 +60,48 @@
         height: 100vh;
     }
 
+    /* Modern scrollbar styling for sidebars and inner panels */
+    .sidebar-left,
+    .sidebar-right,
+    .sidebar-left *,
+    .sidebar-right * {
+        scrollbar-width: thin;
+        scrollbar-color: rgba(128,128,128,0.3) transparent;
+    }
+    .sidebar-left::-webkit-scrollbar,
+    .sidebar-right::-webkit-scrollbar,
+    .sidebar-left *::-webkit-scrollbar,
+    .sidebar-right *::-webkit-scrollbar {
+        width: 5px;
+        height: 0;
+    }
+    .sidebar-left::-webkit-scrollbar-track,
+    .sidebar-right::-webkit-scrollbar-track,
+    .sidebar-left *::-webkit-scrollbar-track,
+    .sidebar-right *::-webkit-scrollbar-track {
+        background: transparent;
+    }
+    .sidebar-left::-webkit-scrollbar-thumb,
+    .sidebar-right::-webkit-scrollbar-thumb,
+    .sidebar-left *::-webkit-scrollbar-thumb,
+    .sidebar-right *::-webkit-scrollbar-thumb {
+        background: rgba(128,128,128,0.3);
+        border-radius: 3px;
+    }
+    .sidebar-left::-webkit-scrollbar-thumb:hover,
+    .sidebar-right::-webkit-scrollbar-thumb:hover,
+    .sidebar-left *::-webkit-scrollbar-thumb:hover,
+    .sidebar-right *::-webkit-scrollbar-thumb:hover {
+        background: rgba(128,128,128,0.5);
+    }
+
     /* Left Sidebar - Tools */
     .sidebar-left {
         width: 300px;
         background: var(--bg-sidebar);
         border-right: 1px solid var(--border-color);
         padding: 1rem;
+        overflow-x: hidden;
         overflow-y: auto;
         transition: width 0.2s, padding 0.2s;
         position: relative;
@@ -145,6 +181,7 @@
         background: var(--bg-sidebar);
         border-left: 1px solid var(--border-color);
         padding: 1rem;
+        overflow-x: hidden;
         overflow-y: auto;
         transition: width 0.2s, padding 0.2s, border 0.2s;
         position: relative;
