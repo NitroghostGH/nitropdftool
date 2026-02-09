@@ -845,6 +845,11 @@ function assetMeterToPixel(meterX, meterY) {
 }
 
 function renderAssetsOnCanvas() {
+    // Only render assets on canvas if a reference point has been placed
+    if (!refAssetId || (refPixelX === 0 && refPixelY === 0)) {
+        return;
+    }
+
     assets.forEach(asset => {
         const pos = assetMeterToPixel(asset.current_x, asset.current_y);
 
