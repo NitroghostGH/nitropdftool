@@ -2956,7 +2956,7 @@ function applyAllCuts(sheetObj, cuts) {
     });
 
     sheetObj.clipPath = clipPath;
-    sheetObj.objectCaching = false;
+    sheetObj.objectCaching = true;
     if (sheetObj.clipPath.setCoords) {
         sheetObj.clipPath.setCoords();
     }
