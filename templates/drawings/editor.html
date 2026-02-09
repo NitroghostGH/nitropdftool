@@ -5,14 +5,17 @@
 
 {% block extra_css %}
 <style>
+    /* Hide the full-width navbar on the editor page */
+    .navbar { display: none; }
+
     .editor-container {
         display: flex;
-        height: calc(100vh - 36px);
+        height: 100vh;
     }
 
     /* Left Sidebar - Tools */
     .sidebar-left {
-        width: 250px;
+        width: 300px;
         background: white;
         border-right: 1px solid #ddd;
         padding: 1rem;
@@ -336,7 +339,11 @@
 <div class="editor-container">
     <!-- Left Sidebar - Tools -->
     <div class="sidebar-left" id="sidebar-left">
-        <button class="sidebar-toggle" onclick="toggleLeftSidebar()" title="Toggle sidebar">&laquo;</button>
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.75rem;">
+            <a href="{% url 'drawings:project_list' %}" style="font-size: 0.8rem; color: #3498db; text-decoration: none;">&larr; Projects</a>
+            <span style="font-size: 0.8rem; font-weight: 600; color: #2c3e50; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 180px;" title="{{ project.name }}">{{ project.name }}</span>
+            <button class="sidebar-toggle" onclick="toggleLeftSidebar()" title="Toggle sidebar" style="margin: 0;">&laquo;</button>
+        </div>
         <div class="tool-section">
             <h4>Mode</h4>
             <button class="tool-btn active" data-mode="pan" onclick="setMode('pan')">
