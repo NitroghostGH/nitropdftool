@@ -761,17 +761,17 @@ function renderSheetsOnCanvas() {
                 img.sheetData = sheet;
                 canvas.add(img);
 
-                // Restore cut masks if sheet has saved cut data
-                if (sheet.cuts_json && sheet.cuts_json.length > 0) {
-                    sheetCutData[sheet.id] = sheet.cuts_json;
-                    applyAllCuts(img, sheet.cuts_json);
-                }
-
-                // Apply PDF inversion if active
+                // Apply PDF inversion if active (before clipPath so filters don't reset it)
                 if (isPdfInverted) {
                     if (!img.filters) img.filters = [];
                     img.filters.push(new fabric.Image.filters.Invert());
                     img.applyFilters();
+                }
+
+                // Restore cut masks if sheet has saved cut data (after filters)
+                if (sheet.cuts_json && sheet.cuts_json.length > 0) {
+                    sheetCutData[sheet.id] = sheet.cuts_json;
+                    applyAllCuts(img, sheet.cuts_json);
                 }
 
                 sheetsLoaded++;
@@ -3509,6 +3509,13 @@ function applyPdfInversion() {
             img.filters = img.filters.filter(function(f) { return f.type !== 'Invert'; });
         }
         img.applyFilters();
+
+        // Re-apply cuts after filter change since applyFilters() can
+        // interfere with clipPath rendering and objectCaching state
+        var sheetId = img.sheetData.id;
+        if (sheetCutData[sheetId] && sheetCutData[sheetId].length > 0) {
+            applyAllCuts(img, sheetCutData[sheetId]);
+        }
     });
     canvas.renderAll();
 }

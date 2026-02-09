@@ -77,7 +77,13 @@
         overflow: hidden;
     }
     .sidebar-left.collapsed .tool-section { display: none; }
+    .sidebar-left.collapsed .sidebar-header-content { display: none; }
     .sidebar-left.collapsed .sidebar-toggle { display: flex; }
+    .sidebar-left.collapsed .sidebar-collapse-bar {
+        flex-direction: column;
+        align-items: center;
+        gap: 0.5rem;
+    }
 
     .tool-section {
         margin-bottom: 1.5rem;
@@ -339,6 +345,30 @@
         z-index: 10;
     }
 
+    /* Dark mode toggle floats on the canvas area */
+    .dark-mode-toggle {
+        position: absolute;
+        top: 0.5rem;
+        left: 50%;
+        transform: translateX(-50%);
+        z-index: 10;
+        display: flex;
+        align-items: center;
+        gap: 0.4rem;
+        background: var(--bg-bottom-toolbar);
+        border: 1px solid var(--border-color);
+        border-radius: 6px;
+        padding: 0.25rem 0.7rem;
+        cursor: pointer;
+        font-size: 0.8rem;
+        color: var(--text-primary);
+        box-shadow: 0 1px 4px rgba(0,0,0,0.15);
+        transition: background 0.2s;
+    }
+    .dark-mode-toggle:hover {
+        background: var(--bg-tool-btn-hover);
+    }
+
     /* Import batch list styles */
     .batch-item {
         padding: 0.4rem 0.5rem;
@@ -392,11 +422,12 @@
 <div class="editor-container">
     <!-- Left Sidebar - Tools -->
     <div class="sidebar-left" id="sidebar-left">
-        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.75rem;">
-            <a href="{% url 'drawings:project_list' %}" style="font-size: 0.8rem; color: var(--btn-primary); text-decoration: none;">&larr; Projects</a>
-            <span style="font-size: 0.8rem; font-weight: 600; color: var(--text-heading); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 140px;" title="{{ project.name }}">{{ project.name }}</span>
+        <div class="sidebar-collapse-bar" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.75rem;">
+            <span class="sidebar-header-content" style="display: contents;">
+                <a href="{% url 'drawings:project_list' %}" style="font-size: 0.8rem; color: var(--btn-primary); text-decoration: none;">&larr; Projects</a>
+                <span style="font-size: 0.8rem; font-weight: 600; color: var(--text-heading); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 140px;" title="{{ project.name }}">{{ project.name }}</span>
+            </span>
             <div style="display: flex; gap: 0.25rem; align-items: center;">
-                <button class="theme-toggle-btn" onclick="toggleTheme()" title="Toggle dark mode" style="font-size: 0.75rem; padding: 0.1rem 0.35rem; border-color: var(--border-color); color: var(--text-muted);" id="editor-theme-toggle"></button>
                 <button class="sidebar-toggle" onclick="toggleLeftSidebar()" title="Toggle sidebar" style="margin: 0;">&laquo;</button>
             </div>
         </div>
@@ -570,6 +601,9 @@
     <!-- Main Canvas Area -->
     <div class="canvas-area">
         <button class="sidebar-toggle right-toggle-btn" onclick="toggleRightSidebar()" title="Toggle properties panel">&raquo;</button>
+        <button class="dark-mode-toggle" id="dark-mode-toggle" onclick="toggleTheme()" title="Toggle dark mode">
+            <span id="dark-mode-icon">☽</span> <span id="dark-mode-label">Dark Mode</span>
+        </button>
         <div id="canvas-container"></div>
 
         <div class="status-bar" id="status-bar">
@@ -815,14 +849,18 @@
 </script>
 <script src="{% static 'js/canvas_editor.js' %}"></script>
 <script>
-    // Sync editor theme toggle icon on load
+    // Sync dark mode toggle on load and changes
     (function(){
+        function updateDarkModeToggle(theme) {
+            var icon = document.getElementById('dark-mode-icon');
+            var label = document.getElementById('dark-mode-label');
+            if (icon) icon.textContent = (theme === 'dark') ? '\u2600' : '\u263D';
+            if (label) label.textContent = (theme === 'dark') ? 'Light Mode' : 'Dark Mode';
+        }
         var t = localStorage.getItem('pdftool-theme') || 'light';
-        var btn = document.getElementById('editor-theme-toggle');
-        if (btn) btn.textContent = (t === 'dark') ? '\u2600' : '\u263D';
-        // Keep in sync on changes
+        updateDarkModeToggle(t);
         window.addEventListener('themechange', function(e) {
-            if (btn) btn.textContent = (e.detail.theme === 'dark') ? '\u2600' : '\u263D';
+            updateDarkModeToggle(e.detail.theme);
         });
     })();
 </script>
