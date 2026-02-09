@@ -259,6 +259,11 @@ function initCanvas() {
         selection: false
     });
 
+    // Force Canvas2D filter backend instead of WebGL.
+    // The WebGL backend has a tileSize of 2048px which can cause images
+    // larger than that to render incorrectly after filter application.
+    fabric.filterBackend = new fabric.Canvas2dFilterBackend();
+
     // Override getZoom: Fabric.js returns vpt[0] which is cos(angle)*zoom,
     // collapsing to ~0 at 90° rotation. Return our tracked zoom instead.
     canvas.getZoom = function() {
@@ -3548,13 +3553,22 @@ function togglePdfInvert() {
 }
 
 /**
- * Apply filters and reset _filterScalingX/Y to 1.
- * The Invert filter doesn't change image dimensions, but Fabric.js's filter
- * pipeline may produce a canvas with different size, causing _filterScalingX != 1
- * which makes _renderFill() draw the image smaller than its actual dimensions.
+ * Apply filters and ensure image dimensions are preserved.
+ * Resets _filterScalingX/Y to 1 and logs diagnostics if the filtered
+ * element dimensions don't match the image's logical dimensions.
  */
 function applyFiltersPreservingSize(img) {
+    var wBefore = img.width, hBefore = img.height;
     img.applyFilters();
+    var el = img._element;
+    var elW = el ? (el.naturalWidth || el.width) : 0;
+    var elH = el ? (el.naturalHeight || el.height) : 0;
+    if (elW !== wBefore || elH !== hBefore || img._filterScalingX !== 1 || img._filterScalingY !== 1) {
+        console.warn('[applyFiltersPreservingSize] dimension mismatch:',
+            'img.width=' + wBefore, 'img.height=' + hBefore,
+            'el.width=' + elW, 'el.height=' + elH,
+            '_filterScalingX=' + img._filterScalingX, '_filterScalingY=' + img._filterScalingY);
+    }
     img._filterScalingX = 1;
     img._filterScalingY = 1;
 }
