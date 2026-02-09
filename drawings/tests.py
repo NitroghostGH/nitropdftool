@@ -354,6 +354,39 @@ class CsvImporterTests(TestCase):
         self.assertEqual(a.metadata.get('depth'), '3.5')
         self.assertEqual(a.metadata.get('material'), 'steel')
 
+    def test_fixed_asset_type_import(self):
+        csv_file = make_csv_content(
+            [{'asset_id': 'F1', 'x': '1', 'y': '2', 'name': 'test'}],
+            fieldnames=['asset_id', 'x', 'y', 'name'],
+        )
+        result = import_assets_from_csv(self.project, csv_file,
+                                        column_mapping={'asset_id': 'asset_id', 'x': 'x', 'y': 'y', 'name': 'name'},
+                                        fixed_asset_type='CCTV')
+        self.assertEqual(result['created'], 1)
+        a = Asset.objects.get(project=self.project, asset_id='F1')
+        self.assertEqual(a.asset_type.name, 'CCTV')
+
+    def test_fixed_asset_type_creates_if_missing(self):
+        csv_file = make_csv_content(
+            [{'asset_id': 'F2', 'x': '3', 'y': '4', 'name': ''}],
+            fieldnames=['asset_id', 'x', 'y', 'name'],
+        )
+        result = import_assets_from_csv(self.project, csv_file,
+                                        column_mapping={'asset_id': 'asset_id', 'x': 'x', 'y': 'y'},
+                                        fixed_asset_type='BrandNew')
+        self.assertEqual(result['created'], 1)
+        self.assertTrue(AssetType.objects.filter(name='BrandNew').exists())
+
+    def test_fixed_asset_type_skips_column_validation(self):
+        csv_file = make_csv_content(
+            [{'asset_id': 'F3', 'x': '5', 'y': '6'}],
+            fieldnames=['asset_id', 'x', 'y'],
+        )
+        result = import_assets_from_csv(self.project, csv_file,
+                                        column_mapping={'asset_id': 'asset_id', 'x': 'x', 'y': 'y'},
+                                        fixed_asset_type='VSL')
+        self.assertEqual(result['created'], 1)
+
 
 # ---------------------------------------------------------------------------
 # API tests
@@ -503,6 +536,26 @@ class CalibrateAPITests(TestCase):
             format='json',
         )
         self.assertEqual(resp.status_code, 400)
+
+    def test_set_gda94_geo_coord_unit(self):
+        resp = self.client.post(
+            f'/api/projects/{self.project.pk}/calibrate/',
+            {'coord_unit': 'gda94_geo'},
+            format='json',
+        )
+        self.assertEqual(resp.status_code, 200)
+        self.project.refresh_from_db()
+        self.assertEqual(self.project.coord_unit, 'gda94_geo')
+
+    def test_set_gda94_mga_coord_unit(self):
+        resp = self.client.post(
+            f'/api/projects/{self.project.pk}/calibrate/',
+            {'coord_unit': 'gda94_mga'},
+            format='json',
+        )
+        self.assertEqual(resp.status_code, 200)
+        self.project.refresh_from_db()
+        self.assertEqual(self.project.coord_unit, 'gda94_mga')
 
 
 @override_settings(DEBUG=True)

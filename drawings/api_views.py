@@ -201,8 +201,15 @@ def import_csv(request, project_pk):
         except (json.JSONDecodeError, TypeError):
             return Response({'error': 'Invalid column_mapping JSON'}, status=400)
 
+    fixed_asset_type = request.data.get('fixed_asset_type') or None
+
     try:
-        result = import_assets_from_csv(project, csv_file, column_mapping=column_mapping, filename=csv_file.name)
+        result = import_assets_from_csv(
+            project, csv_file,
+            column_mapping=column_mapping,
+            filename=csv_file.name,
+            fixed_asset_type=fixed_asset_type,
+        )
         return Response(result)
     except Exception as e:
         logger.error("CSV import failed for project %d: %s", project_pk, e)
@@ -392,10 +399,11 @@ def calibrate_project(request, pk):
     # Coordinate unit setting
     coord_unit = request.data.get('coord_unit')
     if coord_unit is not None:
-        if coord_unit in ('meters', 'degrees'):
+        valid_units = ('meters', 'degrees', 'gda94_geo', 'gda94_mga')
+        if coord_unit in valid_units:
             project.coord_unit = coord_unit
         else:
-            return Response({'error': 'coord_unit must be "meters" or "degrees"'}, status=400)
+            return Response({'error': f'coord_unit must be one of: {", ".join(valid_units)}'}, status=400)
 
     project.save()
 

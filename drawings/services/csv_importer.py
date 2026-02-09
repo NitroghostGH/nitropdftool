@@ -17,7 +17,7 @@ DEFAULT_MAPPING = {
 }
 
 
-def import_assets_from_csv(project, csv_file, column_mapping=None, filename=None):
+def import_assets_from_csv(project, csv_file, column_mapping=None, filename=None, fixed_asset_type=None):
     """
     Import assets from a CSV file into a project.
 
@@ -27,6 +27,7 @@ def import_assets_from_csv(project, csv_file, column_mapping=None, filename=None
         column_mapping: Optional dict mapping roles to CSV column names, e.g.
             {'asset_id': 'TN', 'asset_type': 'asset_type', 'x': 'Easting', 'y': 'Northing'}
         filename: Original filename for batch tracking
+        fixed_asset_type: Optional asset type name to apply to all rows (skips column lookup)
 
     Returns:
         dict with import results
@@ -42,7 +43,9 @@ def import_assets_from_csv(project, csv_file, column_mapping=None, filename=None
 
     # Validate that mapped columns exist in the CSV
     fieldnames = reader.fieldnames
-    required_roles = ['asset_id', 'asset_type', 'x', 'y']
+    required_roles = ['asset_id', 'x', 'y']
+    if not fixed_asset_type:
+        required_roles.append('asset_type')
     missing = []
     for role in required_roles:
         col = mapping.get(role, '')
@@ -65,10 +68,20 @@ def import_assets_from_csv(project, csv_file, column_mapping=None, filename=None
     }
 
     col_id = mapping['asset_id']
-    col_type = mapping['asset_type']
+    col_type = mapping.get('asset_type', '') if not fixed_asset_type else ''
     col_x = mapping['x']
     col_y = mapping['y']
     col_name = mapping.get('name', '')
+
+    # Resolve fixed asset type once if provided
+    fixed_type_obj = None
+    if fixed_asset_type:
+        fixed_key = fixed_asset_type.lower()
+        if fixed_key not in asset_types_cache:
+            fixed_type_obj = AssetType.objects.create(name=fixed_asset_type)
+            asset_types_cache[fixed_key] = fixed_type_obj
+        else:
+            fixed_type_obj = asset_types_cache[fixed_key]
 
     with transaction.atomic():
         # Create import batch for tracking
@@ -83,16 +96,11 @@ def import_assets_from_csv(project, csv_file, column_mapping=None, filename=None
             try:
                 # Extract fields using mapped column names
                 asset_id = row.get(col_id, '').strip()
-                asset_type_name = row.get(col_type, '').strip()
                 x_str = row.get(col_x, '').strip()
                 y_str = row.get(col_y, '').strip()
 
                 if not asset_id:
                     results['errors'].append(f"Row {row_num}: Missing asset_id (column '{col_id}')")
-                    continue
-
-                if not asset_type_name:
-                    results['errors'].append(f"Row {row_num}: Missing asset_type (column '{col_type}')")
                     continue
 
                 # Parse coordinates
@@ -103,14 +111,20 @@ def import_assets_from_csv(project, csv_file, column_mapping=None, filename=None
                     results['errors'].append(f"Row {row_num}: Invalid coordinates ({col_x}={x_str}, {col_y}={y_str})")
                     continue
 
-                # Get or create asset type
-                asset_type_key = asset_type_name.lower()
-                if asset_type_key not in asset_types_cache:
-                    # Create new asset type with defaults
-                    asset_type = AssetType.objects.create(name=asset_type_name)
-                    asset_types_cache[asset_type_key] = asset_type
+                # Resolve asset type
+                if fixed_type_obj:
+                    asset_type = fixed_type_obj
                 else:
-                    asset_type = asset_types_cache[asset_type_key]
+                    asset_type_name = row.get(col_type, '').strip()
+                    if not asset_type_name:
+                        results['errors'].append(f"Row {row_num}: Missing asset_type (column '{col_type}')")
+                        continue
+                    asset_type_key = asset_type_name.lower()
+                    if asset_type_key not in asset_types_cache:
+                        asset_type = AssetType.objects.create(name=asset_type_name)
+                        asset_types_cache[asset_type_key] = asset_type
+                    else:
+                        asset_type = asset_types_cache[asset_type_key]
 
                 # Build metadata from extra columns (not mapped to any role)
                 metadata = {}

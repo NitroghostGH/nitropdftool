@@ -415,7 +415,9 @@
                     <select id="verify-coord-unit" style="width: 100%; padding: 0.3rem; border: 1px solid #ddd; border-radius: 4px; font-size: 0.85rem;"
                             onchange="onCoordUnitChange(this.value)">
                         <option value="meters">Meters</option>
-                        <option value="degrees">Lat/Lon (degrees)</option>
+                        <option value="degrees">Lat/Lon Degrees (WGS84)</option>
+                        <option value="gda94_geo">GDA94 Geographic (Lat/Lon)</option>
+                        <option value="gda94_mga">GDA94 MGA (Easting/Northing)</option>
                     </select>
                 </div>
                 <div style="margin-bottom: 0.5rem;">
@@ -637,7 +639,22 @@
             </div>
             <div class="form-group">
                 <label>Asset Type <span style="color: #dc3545;">*</span></label>
+                <div style="margin-bottom: 0.4rem;">
+                    <label style="margin-right: 1rem; font-weight: normal; font-size: 0.85rem;">
+                        <input type="radio" name="asset-type-mode" value="column" checked
+                               onchange="toggleAssetTypeMode()"> From CSV column
+                    </label>
+                    <label style="font-weight: normal; font-size: 0.85rem;">
+                        <input type="radio" name="asset-type-mode" value="fixed"
+                               onchange="toggleAssetTypeMode()"> Fixed type
+                    </label>
+                </div>
                 <select id="map-asset-type" style="width: 100%; padding: 0.4rem; border: 1px solid #ddd; border-radius: 4px;">
+                </select>
+                <select id="fixed-asset-type" style="width: 100%; padding: 0.4rem; border: 1px solid #ddd; border-radius: 4px; display: none;">
+                    <option value="TN Intersection">TN Intersection</option>
+                    <option value="VSL">VSL</option>
+                    <option value="CCTV">CCTV</option>
                 </select>
             </div>
             <div class="form-group">

@@ -771,7 +771,8 @@ function reorderSheetsByZIndex() {
  * Negates Y for degrees since latitude increases upward but canvas Y increases downward.
  */
 function coordOffsetToMeters(dx, dy, refY) {
-    if (PROJECT_DATA.coord_unit === 'degrees') {
+    const isDegrees = ['degrees', 'gda94_geo'].includes(PROJECT_DATA.coord_unit);
+    if (isDegrees) {
         const centerLatRad = (refY || 0) * Math.PI / 180;
         return {
             x: dx * 111320 * Math.cos(centerLatRad),
@@ -785,7 +786,8 @@ function coordOffsetToMeters(dx, dy, refY) {
  * Convert meter offsets back to coordinate offsets (inverse of coordOffsetToMeters).
  */
 function metersToCoordOffset(mx, my, refY) {
-    if (PROJECT_DATA.coord_unit === 'degrees') {
+    const isDegrees = ['degrees', 'gda94_geo'].includes(PROJECT_DATA.coord_unit);
+    if (isDegrees) {
         const centerLatRad = (refY || 0) * Math.PI / 180;
         const cosLat = Math.cos(centerLatRad);
         return {
@@ -923,6 +925,36 @@ function createAssetShape(asset, x, y) {
                 originX: 'center',
                 originY: 'center'
             });
+            break;
+        case 'custom':
+            // Start with placeholder; async-load custom icon image
+            obj = new fabric.Circle({
+                radius: size / 2,
+                fill: color,
+                stroke: '#000',
+                strokeWidth: 1,
+                originX: 'center',
+                originY: 'center'
+            });
+            if (type && type.custom_icon) {
+                const iconUrl = type.custom_icon;
+                const targetSize = size;
+                const placeholder = obj;
+                setTimeout(() => {
+                    fabric.Image.fromURL(iconUrl, function(img) {
+                        if (!img || !img.width) return;
+                        img.scaleToWidth(targetSize);
+                        img.scaleToHeight(targetSize);
+                        img.set({ originX: 'center', originY: 'center' });
+                        const group = placeholder.group;
+                        if (group) {
+                            group.remove(placeholder);
+                            group.addWithUpdate(img);
+                            canvas.renderAll();
+                        }
+                    }, { crossOrigin: 'anonymous' });
+                }, 0);
+            }
             break;
         default:
             obj = new fabric.Circle({
@@ -2107,6 +2139,19 @@ async function importStepNext() {
         }
     });
 
+    // Restore asset type mode from remembered mapping
+    if (rememberedMapping && rememberedMapping._assetTypeMode) {
+        const radio = document.querySelector(`input[name="asset-type-mode"][value="${rememberedMapping._assetTypeMode}"]`);
+        if (radio) radio.checked = true;
+        if (rememberedMapping._assetTypeMode === 'fixed' && rememberedMapping._fixedAssetType) {
+            document.getElementById('fixed-asset-type').value = rememberedMapping._fixedAssetType;
+        }
+    } else {
+        // Default to column mode
+        document.querySelector('input[name="asset-type-mode"][value="column"]').checked = true;
+    }
+    toggleAssetTypeMode();
+
     if (rememberedMapping) {
         preview.textContent += ' (using remembered mapping)';
     }
@@ -2114,6 +2159,12 @@ async function importStepNext() {
     // Switch to step 2
     document.getElementById('import-step-1').style.display = 'none';
     document.getElementById('import-step-2').style.display = 'block';
+}
+
+function toggleAssetTypeMode() {
+    const mode = document.querySelector('input[name="asset-type-mode"]:checked').value;
+    document.getElementById('map-asset-type').style.display = mode === 'column' ? '' : 'none';
+    document.getElementById('fixed-asset-type').style.display = mode === 'fixed' ? '' : 'none';
 }
 
 function importStepBack() {
@@ -2127,12 +2178,17 @@ async function importWithMapping() {
         return;
     }
 
+    const assetTypeMode = document.querySelector('input[name="asset-type-mode"]:checked').value;
+
     const mapping = {
         asset_id: document.getElementById('map-asset-id').value,
-        asset_type: document.getElementById('map-asset-type').value,
         x: document.getElementById('map-x').value,
         y: document.getElementById('map-y').value,
     };
+
+    if (assetTypeMode === 'column') {
+        mapping.asset_type = document.getElementById('map-asset-type').value;
+    }
 
     // Validate required fields are selected
     for (const [role, col] of Object.entries(mapping)) {
@@ -2151,6 +2207,10 @@ async function importWithMapping() {
     formData.append('file', importCsvFile);
     formData.append('column_mapping', JSON.stringify(mapping));
 
+    if (assetTypeMode === 'fixed') {
+        formData.append('fixed_asset_type', document.getElementById('fixed-asset-type').value);
+    }
+
     try {
         const response = await fetch(`/api/projects/${PROJECT_ID}/import-csv/`, {
             method: 'POST',
@@ -2165,7 +2225,11 @@ async function importWithMapping() {
             // Save column mapping to localStorage for future imports with same headers
             try {
                 const mappingKey = 'csvMapping_' + [...importCsvHeaders].sort().join('|');
-                localStorage.setItem(mappingKey, JSON.stringify(mapping));
+                const saveData = { ...mapping, _assetTypeMode: assetTypeMode };
+                if (assetTypeMode === 'fixed') {
+                    saveData._fixedAssetType = document.getElementById('fixed-asset-type').value;
+                }
+                localStorage.setItem(mappingKey, JSON.stringify(saveData));
             } catch (e) { /* ignore storage errors */ }
 
             alert(`Import complete:\n${result.created} created\n${result.updated} updated\n${result.errors.length} errors`);

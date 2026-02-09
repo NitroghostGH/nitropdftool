@@ -14,7 +14,9 @@ class Project(models.Model):
     # Coordinate system calibration
     COORD_UNIT_CHOICES = [
         ('meters', 'Meters'),
-        ('degrees', 'Lat/Lon Degrees'),
+        ('degrees', 'Lat/Lon Degrees (WGS84)'),
+        ('gda94_geo', 'GDA94 Geographic (Lat/Lon)'),
+        ('gda94_mga', 'GDA94 MGA (Easting/Northing)'),
     ]
     pixels_per_meter = models.FloatField(default=100.0, help_text="Scale factor from pixels to meters")
     scale_calibrated = models.BooleanField(default=False, help_text="Whether scale has been explicitly calibrated")
