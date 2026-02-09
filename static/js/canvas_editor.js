@@ -768,11 +768,11 @@ function renderSheetsOnCanvas() {
                 img.sheetData = sheet;
                 canvas.add(img);
 
-                // Apply PDF inversion if active (before clipPath so filters don't reset it)
+                // Apply PDF inversion if active (before cuts so filters don't reset clip)
                 if (isPdfInverted) {
                     if (!img.filters) img.filters = [];
                     img.filters.push(new fabric.Image.filters.Invert());
-                    img.applyFilters();
+                    applyFiltersPreservingSize(img);
                 }
 
                 // Restore cut masks if sheet has saved cut data (after filters)
@@ -3254,11 +3254,11 @@ async function handleSplitEnd(opt) {
                         img.sheetData = newSheet;
                         canvas.add(img);
 
-                        // Apply PDF inversion FIRST (before clipPath so filters don't reset it)
+                        // Apply PDF inversion FIRST (before cuts so filters don't reset clip)
                         if (isPdfInverted) {
                             if (!img.filters) img.filters = [];
                             img.filters.push(new fabric.Image.filters.Invert());
-                            img.applyFilters();
+                            applyFiltersPreservingSize(img);
                         }
 
                         // Apply opposite cut to new sheet from server response (after filters)
@@ -3547,6 +3547,18 @@ function togglePdfInvert() {
     updatePdfInvertButton();
 }
 
+/**
+ * Apply filters and reset _filterScalingX/Y to 1.
+ * The Invert filter doesn't change image dimensions, but Fabric.js's filter
+ * pipeline may produce a canvas with different size, causing _filterScalingX != 1
+ * which makes _renderFill() draw the image smaller than its actual dimensions.
+ */
+function applyFiltersPreservingSize(img) {
+    img.applyFilters();
+    img._filterScalingX = 1;
+    img._filterScalingY = 1;
+}
+
 function applyPdfInversion() {
     canvas.getObjects().filter(function(obj) { return obj.sheetData; }).forEach(function(img) {
         if (!img.filters) img.filters = [];
@@ -3557,7 +3569,7 @@ function applyPdfInversion() {
         } else {
             img.filters = img.filters.filter(function(f) { return f.type !== 'Invert'; });
         }
-        img.applyFilters();
+        applyFiltersPreservingSize(img);
         img.dirty = true;
     });
     canvas.renderAll();
