@@ -464,6 +464,46 @@ class CalibrateAPITests(TestCase):
         )
         self.assertEqual(resp.status_code, 400)
 
+    def test_scale_calibrated_set_on_calibration(self):
+        self.assertFalse(self.project.scale_calibrated)
+        resp = self.client.post(
+            f'/api/projects/{self.project.pk}/calibrate/',
+            {'pixel_distance': 500, 'real_distance': 10},
+            format='json',
+        )
+        self.assertEqual(resp.status_code, 200)
+        self.assertTrue(resp.json().get('scale_calibrated'))
+        self.project.refresh_from_db()
+        self.assertTrue(self.project.scale_calibrated)
+
+    def test_scale_calibrated_in_project_detail(self):
+        resp = self.client.get(f'/api/projects/{self.project.pk}/')
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()
+        self.assertIn('scale_calibrated', data)
+        self.assertFalse(data['scale_calibrated'])
+        self.assertIn('coord_unit', data)
+        self.assertEqual(data['coord_unit'], 'meters')
+
+    def test_set_coord_unit(self):
+        resp = self.client.post(
+            f'/api/projects/{self.project.pk}/calibrate/',
+            {'coord_unit': 'degrees'},
+            format='json',
+        )
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.json()['coord_unit'], 'degrees')
+        self.project.refresh_from_db()
+        self.assertEqual(self.project.coord_unit, 'degrees')
+
+    def test_invalid_coord_unit_rejected(self):
+        resp = self.client.post(
+            f'/api/projects/{self.project.pk}/calibrate/',
+            {'coord_unit': 'invalid'},
+            format='json',
+        )
+        self.assertEqual(resp.status_code, 400)
+
 
 @override_settings(DEBUG=True)
 class AssetAPITests(TestCase):

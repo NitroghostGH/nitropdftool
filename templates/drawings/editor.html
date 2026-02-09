@@ -400,6 +400,17 @@
                 Verify & Plot
             </button>
             <div id="verify-panel" style="display: none; margin-top: 0.5rem; padding: 0.5rem; background: #f0f7ff; border: 1px solid #bee0ff; border-radius: 4px;">
+                <div id="verify-scale-warning" style="display: none; margin-bottom: 0.5rem; padding: 0.4rem; background: #fff3cd; border: 1px solid #ffc107; border-radius: 4px; font-size: 0.8rem; color: #856404;">
+                    Scale not calibrated. Use the Scale tool first for accurate placement.
+                </div>
+                <div style="margin-bottom: 0.5rem;">
+                    <label style="font-size: 0.8rem; color: #6c757d;">Coordinate Unit</label>
+                    <select id="verify-coord-unit" style="width: 100%; padding: 0.3rem; border: 1px solid #ddd; border-radius: 4px; font-size: 0.85rem;"
+                            onchange="onCoordUnitChange(this.value)">
+                        <option value="meters">Meters</option>
+                        <option value="degrees">Lat/Lon (degrees)</option>
+                    </select>
+                </div>
                 <div style="margin-bottom: 0.5rem;">
                     <label style="font-size: 0.8rem; color: #6c757d;">Reference Asset</label>
                     <select id="verify-asset-select" style="width: 100%; padding: 0.3rem; border: 1px solid #ddd; border-radius: 4px; font-size: 0.85rem;">
@@ -666,6 +677,8 @@
     const PROJECT_ID = {{ project.pk }};
     const PROJECT_DATA = {
         pixels_per_meter: {{ project.pixels_per_meter }},
+        scale_calibrated: {{ project.scale_calibrated|yesno:"true,false" }},
+        coord_unit: '{{ project.coord_unit|escapejs }}',
         origin_x: {{ project.origin_x }},
         origin_y: {{ project.origin_y }},
         canvas_rotation: {{ project.canvas_rotation }},

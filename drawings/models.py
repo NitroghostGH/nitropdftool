@@ -12,7 +12,14 @@ class Project(models.Model):
     updated_at = models.DateTimeField(auto_now=True)
 
     # Coordinate system calibration
+    COORD_UNIT_CHOICES = [
+        ('meters', 'Meters'),
+        ('degrees', 'Lat/Lon Degrees'),
+    ]
     pixels_per_meter = models.FloatField(default=100.0, help_text="Scale factor from pixels to meters")
+    scale_calibrated = models.BooleanField(default=False, help_text="Whether scale has been explicitly calibrated")
+    coord_unit = models.CharField(max_length=10, choices=COORD_UNIT_CHOICES, default='meters',
+                                  help_text="Unit of asset coordinates: meters or lat/lon degrees")
     origin_x = models.FloatField(default=0.0, help_text="X coordinate of origin in pixels")
     origin_y = models.FloatField(default=0.0, help_text="Y coordinate of origin in pixels")
 

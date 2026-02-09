@@ -766,40 +766,81 @@ function reorderSheetsByZIndex() {
 }
 
 /**
- * Convert asset meter coordinates to pixel coordinates.
+ * Convert coordinate offsets to meter offsets, handling degree→meter conversion.
+ * For degrees: uses equirectangular approximation (1° lat ≈ 111320m).
+ * Negates Y for degrees since latitude increases upward but canvas Y increases downward.
+ */
+function coordOffsetToMeters(dx, dy, refY) {
+    if (PROJECT_DATA.coord_unit === 'degrees') {
+        const centerLatRad = (refY || 0) * Math.PI / 180;
+        return {
+            x: dx * 111320 * Math.cos(centerLatRad),
+            y: -(dy * 111320)  // Negate: lat-up → canvas-down
+        };
+    }
+    return { x: dx, y: dy };
+}
+
+/**
+ * Convert meter offsets back to coordinate offsets (inverse of coordOffsetToMeters).
+ */
+function metersToCoordOffset(mx, my, refY) {
+    if (PROJECT_DATA.coord_unit === 'degrees') {
+        const centerLatRad = (refY || 0) * Math.PI / 180;
+        const cosLat = Math.cos(centerLatRad);
+        return {
+            x: cosLat !== 0 ? mx / (111320 * cosLat) : 0,
+            y: -(my / 111320)  // Negate back: canvas-down → lat-up
+        };
+    }
+    return { x: mx, y: my };
+}
+
+/**
+ * Convert asset coordinates to pixel coordinates on the canvas.
  * If a reference asset is set, rotates around the reference point.
  * Otherwise falls back to origin-based transform.
+ * Handles both meter and degree (lat/lon) coordinate systems.
  */
 function assetMeterToPixel(meterX, meterY) {
+    const ppm = PROJECT_DATA.pixels_per_meter;
+    if (!ppm || !isFinite(ppm) || ppm <= 0) {
+        console.warn('assetMeterToPixel: invalid pixels_per_meter:', ppm);
+        return { x: 0, y: 0 };
+    }
+
     if (refAssetId) {
-        // Find the reference asset's meter coords
         const refAsset = assets.find(a => a.asset_id === refAssetId);
         if (refAsset) {
-            const refMeterX = refAsset.current_x;
-            const refMeterY = refAsset.current_y;
+            const refCoordX = refAsset.current_x;
+            const refCoordY = refAsset.current_y;
 
-            // Offset from reference in meters
-            const dmx = meterX - refMeterX;
-            const dmy = meterY - refMeterY;
+            // Offset in native coordinates
+            const dCoordX = meterX - refCoordX;
+            const dCoordY = meterY - refCoordY;
+
+            // Convert to meters (handles degree→meter if needed)
+            const dm = coordOffsetToMeters(dCoordX, dCoordY, refCoordY);
 
             // Rotate by asset layer rotation
             const rad = assetRotationDeg * Math.PI / 180;
             const cos = Math.cos(rad);
             const sin = Math.sin(rad);
-            const rotX = dmx * cos - dmy * sin;
-            const rotY = dmx * sin + dmy * cos;
+            const rotX = dm.x * cos - dm.y * sin;
+            const rotY = dm.x * sin + dm.y * cos;
 
             // Scale to pixels and offset from reference pixel position
             return {
-                x: refPixelX + rotX * PROJECT_DATA.pixels_per_meter,
-                y: refPixelY + rotY * PROJECT_DATA.pixels_per_meter
+                x: refPixelX + rotX * ppm,
+                y: refPixelY + rotY * ppm
             };
         }
     }
-    // Fallback: origin-based transform
+    // Fallback: origin-based transform (uses meter offsets from origin)
+    const dm = coordOffsetToMeters(meterX, meterY, meterY);
     return {
-        x: PROJECT_DATA.origin_x + (meterX * PROJECT_DATA.pixels_per_meter),
-        y: PROJECT_DATA.origin_y + (meterY * PROJECT_DATA.pixels_per_meter)
+        x: PROJECT_DATA.origin_x + (dm.x * ppm),
+        y: PROJECT_DATA.origin_y + (dm.y * ppm)
     };
 }
 
@@ -1127,11 +1168,11 @@ async function applyCalibration() {
 
         const result = await response.json();
         PROJECT_DATA.pixels_per_meter = result.pixels_per_meter;
+        PROJECT_DATA.scale_calibrated = true;
 
-        // Clear calibration markers
-        canvas.getObjects().forEach(obj => {
-            if (obj.calibrationMarker) canvas.remove(obj);
-        });
+        // Clear calibration markers (collect-then-remove for safe iteration)
+        const calibMarkers = canvas.getObjects().filter(obj => obj.calibrationMarker);
+        calibMarkers.forEach(obj => canvas.remove(obj));
 
         calibrationPoints = [];
         hideCalibrateModal();
@@ -1183,10 +1224,9 @@ async function handleOriginClick(opt) {
 }
 
 function drawOriginMarker(x, y) {
-    // Remove existing origin marker
-    canvas.getObjects().forEach(obj => {
-        if (obj.originMarker) canvas.remove(obj);
-    });
+    // Remove existing origin marker (collect-then-remove for safe iteration)
+    const originMarkers = canvas.getObjects().filter(obj => obj.originMarker);
+    originMarkers.forEach(obj => canvas.remove(obj));
 
     const marker = new fabric.Group([
         new fabric.Line([x - 20, y, x + 20, y], { stroke: '#0000FF', strokeWidth: 2 }),
@@ -1214,6 +1254,13 @@ function toggleVerifyPanel() {
         alert('No assets imported yet. Import a CSV first.');
         return;
     }
+
+    // Show/hide scale calibration warning
+    const scaleWarning = document.getElementById('verify-scale-warning');
+    scaleWarning.style.display = PROJECT_DATA.scale_calibrated ? 'none' : 'block';
+
+    // Set coord unit dropdown to current project value
+    document.getElementById('verify-coord-unit').value = PROJECT_DATA.coord_unit || 'meters';
 
     // Populate the asset dropdown
     const select = document.getElementById('verify-asset-select');
@@ -1358,7 +1405,8 @@ async function saveAssetCalibration() {
                 asset_rotation: assetRotationDeg,
                 ref_asset_id: refAssetId,
                 ref_pixel_x: refPixelX,
-                ref_pixel_y: refPixelY
+                ref_pixel_y: refPixelY,
+                coord_unit: PROJECT_DATA.coord_unit
             })
         });
 
@@ -1368,11 +1416,22 @@ async function saveAssetCalibration() {
             PROJECT_DATA.ref_asset_id = result.ref_asset_id;
             PROJECT_DATA.ref_pixel_x = result.ref_pixel_x;
             PROJECT_DATA.ref_pixel_y = result.ref_pixel_y;
+            PROJECT_DATA.coord_unit = result.coord_unit;
             console.log('Asset calibration saved');
         }
     } catch (error) {
         console.error('Error saving asset calibration:', error);
     }
+}
+
+function onCoordUnitChange(value) {
+    PROJECT_DATA.coord_unit = value;
+    // Live preview if reference is set
+    if (refAssetId && (refPixelX !== 0 || refPixelY !== 0)) {
+        refreshAssets();
+    }
+    // Debounced save
+    debouncedSaveAssetCalibration();
 }
 
 async function applyVerification() {
@@ -1405,30 +1464,47 @@ async function applyVerification() {
 
 // Asset Position Updates
 /**
- * Convert pixel coordinates back to meter coordinates (inverse of assetMeterToPixel).
+ * Convert pixel coordinates back to asset coordinates (inverse of assetMeterToPixel).
+ * Handles both meter and degree (lat/lon) coordinate systems.
  */
 function pixelToAssetMeter(pixelX, pixelY) {
+    const ppm = PROJECT_DATA.pixels_per_meter;
+    if (!ppm || !isFinite(ppm) || ppm <= 0) {
+        console.warn('pixelToAssetMeter: invalid pixels_per_meter:', ppm);
+        return { x: 0, y: 0 };
+    }
+
     if (refAssetId) {
         const refAsset = assets.find(a => a.asset_id === refAssetId);
         if (refAsset) {
             const dpx = pixelX - refPixelX;
             const dpy = pixelY - refPixelY;
-            const dmx = dpx / PROJECT_DATA.pixels_per_meter;
-            const dmy = dpy / PROJECT_DATA.pixels_per_meter;
-            // Inverse rotation
+
+            // Inverse rotation (pixel space → meter space)
             const rad = -assetRotationDeg * Math.PI / 180;
             const cos = Math.cos(rad);
             const sin = Math.sin(rad);
+            const rotDpx = dpx * cos - dpy * sin;
+            const rotDpy = dpx * sin + dpy * cos;
+
+            // Pixel offset to meter offset
+            const dmx = rotDpx / ppm;
+            const dmy = rotDpy / ppm;
+
+            // Convert meter offset back to coordinate offset (handles meter→degree if needed)
+            const dCoord = metersToCoordOffset(dmx, dmy, refAsset.current_y);
+
             return {
-                x: refAsset.current_x + dmx * cos - dmy * sin,
-                y: refAsset.current_y + dmx * sin + dmy * cos
+                x: refAsset.current_x + dCoord.x,
+                y: refAsset.current_y + dCoord.y
             };
         }
     }
-    return {
-        x: (pixelX - PROJECT_DATA.origin_x) / PROJECT_DATA.pixels_per_meter,
-        y: (pixelY - PROJECT_DATA.origin_y) / PROJECT_DATA.pixels_per_meter
-    };
+    // Fallback: origin-based inverse
+    const mx = (pixelX - PROJECT_DATA.origin_x) / ppm;
+    const my = (pixelY - PROJECT_DATA.origin_y) / ppm;
+    const coord = metersToCoordOffset(mx, my, 0);
+    return { x: coord.x, y: coord.y };
 }
 
 function updateAssetPositionFromCanvas(obj) {
@@ -1621,10 +1697,9 @@ function updateSheetOnCanvas(sheetId, property, value) {
 
 // Refresh Functions
 function refreshAssets() {
-    // Remove existing asset objects
-    canvas.getObjects().forEach(obj => {
-        if (obj.assetData) canvas.remove(obj);
-    });
+    // Collect-then-remove to avoid mutation-during-iteration
+    const toRemove = canvas.getObjects().filter(obj => obj.assetData);
+    toRemove.forEach(obj => canvas.remove(obj));
 
     // Re-render
     renderAssetsOnCanvas();
@@ -2864,7 +2939,7 @@ async function deleteImportBatch(batchId, filename) {
         const assetsResp = await fetch(`/api/projects/${PROJECT_ID}/assets/`);
         assets = await assetsResp.json();
         renderAssetList();
-        renderAssetsOnCanvas();
+        refreshAssets();
         renderImportBatches();
     } catch (err) {
         console.error('Error deleting batch:', err);
@@ -2888,7 +2963,7 @@ async function deleteAsset(assetId, assetLabel) {
         const assetsResp = await fetch(`/api/projects/${PROJECT_ID}/assets/`);
         assets = await assetsResp.json();
         renderAssetList();
-        renderAssetsOnCanvas();
+        refreshAssets();
         renderImportBatches();
     } catch (err) {
         console.error('Error deleting asset:', err);

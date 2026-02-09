@@ -101,7 +101,8 @@ class ProjectSerializer(serializers.ModelSerializer):
         model = Project
         fields = [
             'id', 'name', 'description',
-            'pixels_per_meter', 'origin_x', 'origin_y', 'canvas_rotation',
+            'pixels_per_meter', 'scale_calibrated', 'coord_unit',
+            'origin_x', 'origin_y', 'canvas_rotation',
             'asset_rotation', 'ref_asset_id', 'ref_pixel_x', 'ref_pixel_y',
             'sheets', 'asset_count',
             'created_at', 'updated_at'

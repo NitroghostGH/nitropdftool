@@ -332,6 +332,7 @@ def calibrate_project(request, pk):
             return Response({'error': 'pixel_distance must be greater than 0'}, status=400)
 
         project.pixels_per_meter = pixel_distance / real_distance
+        project.scale_calibrated = True
         logger.info("Project %d calibrated: %.2f px/m (pixel_dist=%.2f, real_dist=%.2f)",
                      project.pk, project.pixels_per_meter, pixel_distance, real_distance)
 
@@ -377,10 +378,20 @@ def calibrate_project(request, pk):
     except ValueError as e:
         return Response({'error': str(e)}, status=400)
 
+    # Coordinate unit setting
+    coord_unit = request.data.get('coord_unit')
+    if coord_unit is not None:
+        if coord_unit in ('meters', 'degrees'):
+            project.coord_unit = coord_unit
+        else:
+            return Response({'error': 'coord_unit must be "meters" or "degrees"'}, status=400)
+
     project.save()
 
     return Response({
         'pixels_per_meter': project.pixels_per_meter,
+        'scale_calibrated': project.scale_calibrated,
+        'coord_unit': project.coord_unit,
         'origin_x': project.origin_x,
         'origin_y': project.origin_y,
         'canvas_rotation': project.canvas_rotation,
