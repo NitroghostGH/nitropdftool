@@ -1004,13 +1004,46 @@ function createAssetShape(asset, x, y) {
                 setTimeout(() => {
                     fabric.Image.fromURL(iconUrl, function(img) {
                         if (!img || !img.width) return;
-                        img.scaleToWidth(targetSize);
-                        img.scaleToHeight(targetSize);
-                        img.set({ originX: 'center', originY: 'center' });
-                        const group = placeholder.group;
-                        if (group) {
-                            group.remove(placeholder);
-                            group.addWithUpdate(img);
+                        // Scale uniformly to fit within targetSize, preserving aspect ratio
+                        var scale = targetSize / Math.max(img.width, img.height);
+                        img.set({
+                            scaleX: scale,
+                            scaleY: scale,
+                            originX: 'center',
+                            originY: 'center'
+                        });
+                        var oldGroup = placeholder.group;
+                        if (oldGroup) {
+                            var groupLeft = oldGroup.left;
+                            var groupTop = oldGroup.top;
+                            // Build a new label matching the original
+                            var labelText = asset.name || asset.asset_id;
+                            var newLabel = new fabric.Text(labelText, {
+                                fontSize: 10,
+                                fill: '#000',
+                                originX: 'left',
+                                originY: 'center'
+                            });
+                            var newGroup = new fabric.Group([img, newLabel], {
+                                left: groupLeft,
+                                top: groupTop,
+                                selectable: true,
+                                hasControls: false,
+                                hasBorders: true,
+                                lockScalingX: true,
+                                lockScalingY: true,
+                                lockRotation: true,
+                                cornerSize: 0
+                            });
+                            newGroup.setControlsVisibility({
+                                tl: false, tr: false, bl: false, br: false,
+                                ml: false, mt: false, mr: false, mb: false,
+                                mtr: false
+                            });
+                            // Copy data reference from old group
+                            newGroup.assetData = oldGroup.assetData;
+                            canvas.remove(oldGroup);
+                            canvas.add(newGroup);
                             canvas.renderAll();
                         }
                     }, { crossOrigin: 'anonymous' });
