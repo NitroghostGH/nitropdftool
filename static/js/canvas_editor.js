@@ -2949,11 +2949,17 @@ function applyAllCuts(sheetObj, cuts) {
     }
 
     const clipPath = new fabric.Polygon(polygon, {
-        originX: 'left',
-        originY: 'top',
+        originX: 'center',
+        originY: 'center',
         absolutePositioned: false,
         objectCaching: false
     });
+    // Compensate for pathOffset so polygon points map correctly
+    // to the image's center-based local coordinate space
+    if (clipPath.pathOffset) {
+        clipPath.left = clipPath.pathOffset.x;
+        clipPath.top = clipPath.pathOffset.y;
+    }
 
     sheetObj.clipPath = clipPath;
     sheetObj.objectCaching = false;
@@ -3205,18 +3211,18 @@ async function handleSplitEnd(opt) {
                         img.sheetData = newSheet;
                         canvas.add(img);
 
-                        // Apply opposite cut to new sheet from server response
-                        const newCuts = newSheet.cuts_json || [];
-                        if (newCuts.length > 0) {
-                            sheetCutData[newSheet.id] = newCuts;
-                            applyAllCuts(img, newCuts);
-                        }
-
-                        // Apply PDF inversion if active
+                        // Apply PDF inversion FIRST (before clipPath so filters don't reset it)
                         if (isPdfInverted) {
                             if (!img.filters) img.filters = [];
                             img.filters.push(new fabric.Image.filters.Invert());
                             img.applyFilters();
+                        }
+
+                        // Apply opposite cut to new sheet from server response (after filters)
+                        const newCuts = newSheet.cuts_json || [];
+                        if (newCuts.length > 0) {
+                            sheetCutData[newSheet.id] = newCuts;
+                            applyAllCuts(img, newCuts);
                         }
 
                         canvas.renderAll();
