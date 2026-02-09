@@ -1298,20 +1298,54 @@ function toggleVerifyPanel() {
     document.getElementById('verify-rotation-slider').value = assetRotationDeg;
     document.getElementById('verify-rotation-input').value = assetRotationDeg;
 
+    // Start with collapsed list
+    collapseVerifyAssetList();
+
     panel.style.display = 'block';
     setMode('verify-asset');
-
-    // Show ref info when asset is selected
-    select.onchange = updateVerifyRefInfo;
 }
 
 function filterVerifyAssetSelect(query) {
     const select = document.getElementById('verify-asset-select');
     const q = query.toLowerCase();
+    let visibleCount = 0;
     for (const opt of select.options) {
-        if (!opt.value) continue;  // Keep the "-- Select --" placeholder
-        opt.style.display = opt.textContent.toLowerCase().includes(q) ? '' : 'none';
+        if (!opt.value) continue;
+        const visible = opt.textContent.toLowerCase().includes(q);
+        opt.style.display = visible ? '' : 'none';
+        if (visible) visibleCount++;
     }
+    // Resize to fit visible results (capped at 15 rows)
+    const rows = Math.min(Math.max(visibleCount, 2), 15);
+    select.size = rows;
+    select.style.height = (rows * 1.6) + 'em';
+}
+
+function expandVerifyAssetList() {
+    const select = document.getElementById('verify-asset-select');
+    // Count visible options
+    let visibleCount = 0;
+    for (const opt of select.options) {
+        if (!opt.value) continue;
+        if (opt.style.display !== 'none') visibleCount++;
+    }
+    const rows = Math.min(Math.max(visibleCount, 2), 15);
+    select.size = rows;
+    select.style.height = (rows * 1.6) + 'em';
+}
+
+function collapseVerifyAssetList() {
+    const select = document.getElementById('verify-asset-select');
+    select.size = 1;
+    select.style.height = '2em';
+}
+
+function onVerifyAssetSelected() {
+    const select = document.getElementById('verify-asset-select');
+    if (select.value) {
+        collapseVerifyAssetList();
+    }
+    updateVerifyRefInfo();
 }
 
 function updateVerifyRefInfo() {

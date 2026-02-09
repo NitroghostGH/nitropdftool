@@ -422,8 +422,13 @@
                     <label style="font-size: 0.8rem; color: #6c757d;">Reference Asset</label>
                     <input type="text" id="verify-asset-search" placeholder="Search assets..."
                            style="width: 100%; padding: 0.3rem; border: 1px solid #ddd; border-radius: 4px; font-size: 0.85rem; margin-bottom: 0.3rem; box-sizing: border-box;"
-                           oninput="filterVerifyAssetSelect(this.value)">
-                    <select id="verify-asset-select" size="5" style="width: 100%; padding: 0.3rem; border: 1px solid #ddd; border-radius: 4px; font-size: 0.85rem;">
+                           oninput="filterVerifyAssetSelect(this.value)"
+                           onfocus="expandVerifyAssetList()"
+                           >
+                    <select id="verify-asset-select" size="1"
+                            style="width: 100%; padding: 0.3rem; border: 1px solid #ddd; border-radius: 4px; font-size: 0.85rem; transition: height 0.25s ease; overflow-y: auto;"
+                            onchange="onVerifyAssetSelected()"
+                            onfocus="expandVerifyAssetList()">
                         <option value="">-- Select --</option>
                     </select>
                 </div>
