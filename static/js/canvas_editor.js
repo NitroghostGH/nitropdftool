@@ -1264,6 +1264,17 @@ function toggleVerifyPanel() {
     const scaleWarning = document.getElementById('verify-scale-warning');
     scaleWarning.style.display = PROJECT_DATA.scale_calibrated ? 'none' : 'block';
 
+    // Auto-detect coordinate unit from asset values if not already set to degrees
+    if (PROJECT_DATA.coord_unit === 'meters' && assets.length > 0) {
+        const looksLikeDegrees = assets.every(a =>
+            Math.abs(a.current_x) <= 180 && Math.abs(a.current_y) <= 90
+        );
+        if (looksLikeDegrees) {
+            PROJECT_DATA.coord_unit = 'degrees';
+            debouncedSaveAssetCalibration();
+        }
+    }
+
     // Set coord unit dropdown to current project value
     document.getElementById('verify-coord-unit').value = PROJECT_DATA.coord_unit || 'meters';
 
