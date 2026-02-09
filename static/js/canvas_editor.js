@@ -3311,6 +3311,13 @@ async function renderImportBatches() {
             countSpan.className = 'batch-count';
             countSpan.textContent = `${batch.asset_count}`;
 
+            const typeBtn = document.createElement('button');
+            typeBtn.className = 'batch-delete-btn';
+            typeBtn.textContent = '\u25CF';
+            typeBtn.title = 'Change asset type for this batch';
+            typeBtn.style.fontSize = '0.75rem';
+            typeBtn.addEventListener('click', function() { showBatchTypeSelect(div, batch.id); });
+
             const delBtn = document.createElement('button');
             delBtn.className = 'batch-delete-btn';
             delBtn.textContent = '\u00D7';
@@ -3319,12 +3326,93 @@ async function renderImportBatches() {
 
             header.appendChild(nameSpan);
             header.appendChild(countSpan);
+            header.appendChild(typeBtn);
             header.appendChild(delBtn);
             div.appendChild(header);
             container.appendChild(div);
         });
     } catch (err) {
         console.error('Error loading import batches:', err);
+    }
+}
+
+function showBatchTypeSelect(batchDiv, batchId) {
+    // Remove any existing type-select row
+    var existing = batchDiv.querySelector('.batch-type-row');
+    if (existing) { existing.remove(); return; }
+
+    var row = document.createElement('div');
+    row.className = 'batch-type-row';
+    row.style.cssText = 'display: flex; gap: 0.25rem; margin-top: 0.3rem; align-items: center;';
+
+    var sel = document.createElement('select');
+    sel.style.cssText = 'flex: 1; padding: 0.2rem; border: 1px solid var(--border-color, #ddd); border-radius: 4px; font-size: 0.8rem; background: var(--bg-input, #fff); color: var(--text-primary, #333);';
+
+    // Populate from known asset types (gathered from loaded assets)
+    var typeNames = {};
+    assets.forEach(function(a) {
+        if (a.asset_type_data && a.asset_type_data.name) typeNames[a.asset_type_data.name] = true;
+    });
+    // Always include the 3 defaults
+    ['TN Intersection', 'VSL', 'CCTV'].forEach(function(n) { typeNames[n] = true; });
+
+    Object.keys(typeNames).sort().forEach(function(name) {
+        var opt = document.createElement('option');
+        opt.value = name;
+        opt.textContent = name;
+        sel.appendChild(opt);
+    });
+
+    // Custom option
+    var customOpt = document.createElement('option');
+    customOpt.value = '__custom__';
+    customOpt.textContent = '+ New type...';
+    sel.appendChild(customOpt);
+
+    var applyBtn = document.createElement('button');
+    applyBtn.className = 'btn btn-success';
+    applyBtn.textContent = 'Apply';
+    applyBtn.style.cssText = 'padding: 0.2rem 0.5rem; font-size: 0.8rem;';
+    applyBtn.addEventListener('click', function() {
+        var typeName = sel.value;
+        if (typeName === '__custom__') {
+            typeName = prompt('Enter new asset type name:');
+            if (!typeName || !typeName.trim()) return;
+            typeName = typeName.trim();
+        }
+        reassignBatchType(batchId, typeName);
+    });
+
+    row.appendChild(sel);
+    row.appendChild(applyBtn);
+    batchDiv.appendChild(row);
+}
+
+async function reassignBatchType(batchId, typeName) {
+    try {
+        var resp = await fetch('/api/import-batches/' + batchId + '/', {
+            method: 'PATCH',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': getCSRFToken()
+            },
+            body: JSON.stringify({ asset_type_name: typeName })
+        });
+        if (!resp.ok) {
+            var data = await resp.json().catch(function() { return {}; });
+            alert(data.error || 'Failed to reassign asset type');
+            return;
+        }
+        await resp.json();
+        // Reload assets to reflect new types
+        var assetsResp = await fetch('/api/projects/' + PROJECT_ID + '/assets/');
+        assets = await assetsResp.json();
+        renderAssetList();
+        refreshAssets();
+        renderImportBatches();
+    } catch (err) {
+        console.error('Error reassigning batch type:', err);
+        alert('Error reassigning asset type');
     }
 }
 

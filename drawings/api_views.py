@@ -295,10 +295,19 @@ def import_batch_list(request, project_pk):
     return Response(serializer.data)
 
 
-@api_view(['DELETE'])
+@api_view(['DELETE', 'PATCH'])
 def import_batch_delete(request, pk):
-    """Delete an import batch and all its assets."""
+    """Delete an import batch, or PATCH to reassign asset type."""
     batch = get_object_or_404(ImportBatch, pk=pk)
+
+    if request.method == 'PATCH':
+        asset_type_name = (request.data.get('asset_type_name') or '').strip()
+        if not asset_type_name:
+            return Response({'error': 'asset_type_name is required'}, status=status.HTTP_400_BAD_REQUEST)
+        asset_type, _created = AssetType.objects.get_or_create(name=asset_type_name)
+        updated = batch.assets.all().update(asset_type=asset_type)
+        logger.info("Reassigned %d assets in batch %d to type '%s'", updated, pk, asset_type_name)
+        return Response({'updated': updated, 'asset_type': asset_type_name})
     project = batch.project
     asset_count = batch.assets.count()
     batch.assets.all().delete()

@@ -702,6 +702,35 @@ class ImportBatchAPITests(TestCase):
         self.assertFalse(Asset.objects.filter(asset_id='BA1').exists())
         self.assertFalse(ImportBatch.objects.filter(pk=batch.pk).exists())
 
+    def test_reassign_batch_asset_type(self):
+        batch = ImportBatch.objects.create(project=self.project, filename='r.csv', asset_count=2)
+        Asset.objects.create(
+            project=self.project, asset_type=self.asset_type,
+            asset_id='RA1', original_x=0, original_y=0, import_batch=batch,
+        )
+        Asset.objects.create(
+            project=self.project, asset_type=self.asset_type,
+            asset_id='RA2', original_x=1, original_y=1, import_batch=batch,
+        )
+        resp = self.client.patch(
+            f'/api/import-batches/{batch.pk}/',
+            {'asset_type_name': 'NewType'},
+            format='json',
+        )
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.json()['updated'], 2)
+        new_type = AssetType.objects.get(name='NewType')
+        self.assertTrue(Asset.objects.filter(import_batch=batch, asset_type=new_type).count() == 2)
+
+    def test_reassign_batch_missing_name(self):
+        batch = ImportBatch.objects.create(project=self.project, filename='r2.csv', asset_count=0)
+        resp = self.client.patch(
+            f'/api/import-batches/{batch.pk}/',
+            {'asset_type_name': ''},
+            format='json',
+        )
+        self.assertEqual(resp.status_code, 400)
+
 
 @override_settings(DEBUG=True)
 class ColumnPresetsAPITests(TestCase):
