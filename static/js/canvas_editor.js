@@ -35,6 +35,7 @@ let cropStart = null;
 let isCropping = false;
 let sheetCutData = {};  // Store cut data per sheet for flipping
 let cutStatsLabel = null;  // Fabric.Text showing angle/length while drawing
+let showUncutSheetId = null;  // Sheet ID currently showing uncut, or null
 
 // Viewport rotation state
 let viewportRotation = 0;  // Will be loaded from PROJECT_DATA
@@ -313,8 +314,6 @@ function setupCanvasEvents() {
             handleCalibrationClick(opt);
         } else if (currentMode === 'origin') {
             handleOriginClick(opt);
-        } else if (currentMode === 'select') {
-            handleSelectClick(opt);
         } else if (currentMode === 'crop') {
             handleCropClick(opt);
         } else if (currentMode === 'split') {
@@ -404,6 +403,7 @@ function setupCanvasEvents() {
         vpt[5] += point.y - newScreenPt.y;
 
         canvas.setViewportTransform(vpt);
+        canvas.forEachObject(function(obj) { obj.setCoords(); });
         opt.e.preventDefault();
         opt.e.stopPropagation();
 
@@ -459,11 +459,14 @@ function setupCanvasEvents() {
         }
     });
 
-    // Sync selection when user clicks on an object
+    // Let Fabric.js selection events be the single source of truth
+    // for which object is selected (avoids conflicts with mouse:down).
     canvas.on('selection:created', function(opt) {
         const obj = opt.selected[0];
         if (obj && obj.sheetData) {
             selectSheet(obj.sheetData.id);
+        } else if (obj && obj.assetData) {
+            selectAsset(obj.assetData.id);
         }
     });
 
@@ -471,7 +474,13 @@ function setupCanvasEvents() {
         const obj = opt.selected[0];
         if (obj && obj.sheetData) {
             selectSheet(obj.sheetData.id);
+        } else if (obj && obj.assetData) {
+            selectAsset(obj.assetData.id);
         }
+    });
+
+    canvas.on('selection:cleared', function() {
+        clearSelection();
     });
 }
 
@@ -527,23 +536,22 @@ function setMode(mode) {
 
     currentMode = mode;
 
-    // Toggle measure panel visibility
-    const measurePanel = document.getElementById('measure-panel');
-    if (measurePanel) {
-        measurePanel.style.display = (mode === 'measure') ? 'block' : 'none';
+    // Toggle measure panel visibility (now in its own sidebar section)
+    const measureSection = document.getElementById('measure-section');
+    if (measureSection) {
+        measureSection.style.display = (mode === 'measure') ? 'block' : 'none';
     }
 
-    // Auto-deselect when entering crop, split, or measure mode
-    if (mode === 'crop' || mode === 'split' || mode === 'measure') {
-        canvas.discardActiveObject();
-        selectedSheet = null;
-        selectedAsset = null;
-        document.querySelectorAll('.layer-item').forEach(item => item.classList.remove('selected'));
-        canvas.renderAll();
+    // Auto-deselect when leaving select mode
+    if (mode !== 'select') {
+        clearSelection();
     }
 
-    // Update button states
+    // Update button states (both sidebar and floating toolbar)
     document.querySelectorAll('.tool-btn[data-mode]').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.mode === mode);
+    });
+    document.querySelectorAll('.ftool-btn[data-mode]').forEach(btn => {
         btn.classList.toggle('active', btn.dataset.mode === mode);
     });
 
@@ -592,8 +600,6 @@ function setMode(mode) {
         if (obj.sheetData) {
             obj.selectable = isSelectMode;
             obj.evented = isSelectMode || isCropOrSplitMode;
-            obj.hasControls = isSelectMode;  // Show rotation control only in select mode
-            // Override hover cursor so sheets show crosshair in cut/split mode
             obj.hoverCursor = isCropOrSplitMode ? 'crosshair' : 'move';
         }
     });
@@ -748,27 +754,15 @@ function renderSheetsOnCanvas() {
                     angle: sheet.rotation,
                     selectable: currentMode === 'select',
                     evented: true,
-                    // Enable rotation control only, disable scaling
-                    hasControls: true,
-                    hasBorders: true,
-                    hasRotatingPoint: true,
+                    // Disable native Fabric.js borders/controls — they don't
+                    // render correctly when the viewport is rotated.  Selection
+                    // is indicated with a shadow glow instead (see selectSheet).
+                    hasControls: false,
+                    hasBorders: false,
                     lockScalingX: true,
                     lockScalingY: true,
                     lockUniScaling: true,
-                    lockRotation: false,  // Allow rotation
-                    // Rotation control styling
-                    cornerSize: 12,
-                    cornerColor: '#3498db',
-                    cornerStrokeColor: '#2980b9',
-                    transparentCorners: false,
-                    borderColor: '#3498db',
-                    rotatingPointOffset: 30,
-                });
-                // Only show rotation control (mtr), hide all resize controls
-                img.setControlsVisibility({
-                    tl: false, tr: false, bl: false, br: false,
-                    ml: false, mt: false, mr: false, mb: false,
-                    mtr: true  // Show rotation control
+                    lockRotation: false,
                 });
                 img.sheetData = sheet;
                 canvas.add(img);
@@ -1114,6 +1108,25 @@ function createStarPoints(cx, cy, spikes, outerRadius, innerRadius) {
     return points;
 }
 
+// Context-sensitive floating toolbar buttons
+function updateContextTools() {
+    const hasSheet = !!selectedSheet;
+    const hasCut = hasSheet && sheetCutData[selectedSheet.id] && sheetCutData[selectedSheet.id].length > 0;
+
+    const flipBtn = document.getElementById('ftool-flip');
+    const clearCutBtn = document.getElementById('ftool-clear-cut');
+    const showUncutBtn = document.getElementById('ftool-show-uncut');
+
+    if (flipBtn) flipBtn.style.display = hasSheet ? 'flex' : 'none';
+    if (clearCutBtn) clearCutBtn.style.display = hasSheet ? 'flex' : 'none';
+    if (showUncutBtn) showUncutBtn.style.display = (hasSheet && hasCut) ? 'flex' : 'none';
+
+    // Update show-uncut active state
+    if (showUncutBtn) {
+        showUncutBtn.classList.toggle('active', showUncutSheetId === (selectedSheet && selectedSheet.id));
+    }
+}
+
 // Selection Handlers
 function handleSelectClick(opt) {
     const target = opt.target;
@@ -1130,8 +1143,45 @@ function handleSelectClick(opt) {
 }
 
 function selectSheet(sheetId) {
+    // Reset show-uncut if switching to a different sheet
+    if (showUncutSheetId !== null && showUncutSheetId !== sheetId) {
+        const prevObj = canvas.getObjects().find(obj =>
+            obj.sheetData && obj.sheetData.id === showUncutSheetId
+        );
+        if (prevObj) {
+            prevObj._showUncut = false;
+            prevObj.dirty = true;
+        }
+        showUncutSheetId = null;
+    }
+
     selectedSheet = sheets.find(s => s.id === sheetId);
     selectedAsset = null;
+
+    // Highlight selected sheet with a glow shadow on canvas
+    // (native Fabric.js borders break under viewport rotation)
+    const selectionShadow = new fabric.Shadow({
+        color: 'rgba(52, 152, 219, 0.7)',
+        blur: 20,
+        offsetX: 0,
+        offsetY: 0,
+    });
+    canvas.getObjects().forEach(obj => {
+        if (obj.sheetData) {
+            if (obj.sheetData.id === sheetId) {
+                obj.shadow = selectionShadow;
+                // Sync Fabric.js active object so dragging/rotating works
+                // Only in select mode — other modes (crop/split) need selectSheet
+                // for state tracking but must NOT make the object draggable
+                if (currentMode === 'select' && canvas.getActiveObject() !== obj) {
+                    canvas.setActiveObject(obj);
+                }
+            } else {
+                obj.shadow = null;
+            }
+        }
+    });
+    canvas.renderAll();
 
     // Update layer list
     document.querySelectorAll('.layer-item').forEach(item => {
@@ -1149,14 +1199,16 @@ function selectSheet(sheetId) {
     document.getElementById('sheet-offset-y').value = selectedSheet.offset_y;
     document.getElementById('sheet-rotation').value = selectedSheet.rotation;
     document.getElementById('sheet-zindex').value = selectedSheet.z_index;
+    updateContextTools();
 }
 
 function selectAsset(assetId) {
     selectedAsset = assets.find(a => a.id === assetId);
     selectedSheet = null;
 
-    // Highlight on canvas
+    // Clear sheet selection shadow and highlight asset on canvas
     canvas.getObjects().forEach(obj => {
+        if (obj.sheetData) obj.shadow = null;
         if (obj.assetData && obj.assetData.id === assetId) {
             canvas.setActiveObject(obj);
         }
@@ -1178,11 +1230,34 @@ function selectAsset(assetId) {
     showTab('properties');
 }
 
+let _clearingSelection = false;
 function clearSelection() {
+    // Guard against re-entrant calls (discardActiveObject fires selection:cleared)
+    if (_clearingSelection) return;
+    _clearingSelection = true;
+
+    // Reset show-uncut state
+    if (showUncutSheetId !== null) {
+        const prevObj = canvas.getObjects().find(obj =>
+            obj.sheetData && obj.sheetData.id === showUncutSheetId
+        );
+        if (prevObj) {
+            prevObj._showUncut = false;
+            prevObj.dirty = true;
+        }
+        showUncutSheetId = null;
+    }
+
     selectedSheet = null;
     selectedAsset = null;
     canvas.discardActiveObject();
+
+    // Clear selection shadow from all sheets
+    canvas.getObjects().forEach(obj => {
+        if (obj.sheetData) obj.shadow = null;
+    });
     canvas.renderAll();
+    _clearingSelection = false;
 
     document.querySelectorAll('.layer-item').forEach(item => {
         item.classList.remove('selected');
@@ -1191,6 +1266,7 @@ function clearSelection() {
     document.getElementById('no-selection').style.display = 'block';
     document.getElementById('sheet-properties').style.display = 'none';
     document.getElementById('asset-properties').style.display = 'none';
+    updateContextTools();
 }
 
 // Delete selected sheet
@@ -1736,15 +1812,15 @@ function toggleMeasureMode(mode) {
 }
 
 function toggleMeasurePanel() {
-    const panel = document.getElementById('measure-panel');
-    const isVisible = panel.style.display !== 'none';
+    const section = document.getElementById('measure-section');
+    const isVisible = section && section.style.display !== 'none';
     if (isVisible) {
-        panel.style.display = 'none';
+        if (section) section.style.display = 'none';
         clearMeasurements();
         setMode('pan');
         return;
     }
-    panel.style.display = 'block';
+    if (section) section.style.display = 'block';
     setMode('measure');
 }
 
@@ -2127,6 +2203,43 @@ function toggleSheetVisibility(sheetId, visible) {
     canvas.renderAll();
 }
 
+function toggleLayerGroup(groupName) {
+    const body = document.getElementById(groupName + '-group-body');
+    const chevron = document.getElementById(groupName + '-chevron');
+    if (body) body.classList.toggle('collapsed');
+    if (chevron) chevron.classList.toggle('collapsed');
+}
+
+function toggleGroupVisibility(groupName, visible) {
+    if (groupName === 'sheets') {
+        canvas.getObjects().forEach(obj => {
+            if (obj.sheetData) obj.visible = visible;
+        });
+        // Sync individual checkboxes
+        document.querySelectorAll('#sheet-layers .layer-visibility').forEach(cb => {
+            cb.checked = visible;
+        });
+    } else if (groupName === 'assets') {
+        canvas.getObjects().forEach(obj => {
+            if (obj.assetData) obj.visible = visible;
+        });
+        // Sync batch checkboxes
+        document.querySelectorAll('#import-batches .batch-visibility').forEach(cb => {
+            cb.checked = visible;
+        });
+    }
+    canvas.renderAll();
+}
+
+function toggleBatchVisibility(batchId, visible) {
+    canvas.getObjects().forEach(obj => {
+        if (obj.assetData && obj.assetData.import_batch === batchId) {
+            obj.visible = visible;
+        }
+    });
+    canvas.renderAll();
+}
+
 // Zoom Controls
 function zoomIn() {
     let zoom = currentZoomLevel * 1.2;
@@ -2162,6 +2275,10 @@ function setZoomPreservingRotation(zoom) {
     // Keep pan values unchanged
 
     canvas.setViewportTransform(vpt);
+
+    canvas.forEachObject(function(obj) {
+        obj.setCoords();
+    });
 }
 
 function zoomFit() {
@@ -2204,6 +2321,61 @@ function zoomFit() {
     updateZoomDisplay();
 }
 
+/**
+ * Bring to Scale - Zoom to fit all sheets while respecting real-world scale
+ * Similar to zoomFit but considers scale calibration for more accurate view
+ */
+function bringToScale() {
+    // Calculate bounds of all sheet objects
+    const objects = canvas.getObjects().filter(obj => obj.sheetData);
+    if (objects.length === 0) {
+        alert('No sheets to display');
+        return;
+    }
+
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    objects.forEach(obj => {
+        const bounds = obj.getBoundingRect();
+        minX = Math.min(minX, bounds.left);
+        minY = Math.min(minY, bounds.top);
+        maxX = Math.max(maxX, bounds.left + bounds.width);
+        maxY = Math.max(maxY, bounds.top + bounds.height);
+    });
+
+    const contentWidth = maxX - minX;
+    const contentHeight = maxY - minY;
+
+    // Guard against zero-dimension content
+    if (contentWidth < 1 || contentHeight < 1) {
+        setZoomPreservingRotation(1);
+        canvas.absolutePan({ x: 0, y: 0 });
+        applyViewportRotation();
+        updateZoomDisplay();
+        return;
+    }
+
+    // Calculate optimal zoom to fit content with padding
+    const zoomX = canvas.width / contentWidth * 0.85;
+    const zoomY = canvas.height / contentHeight * 0.85;
+    let zoom = Math.min(zoomX, zoomY);
+
+    // Cap zoom at 2x for usability (don't zoom in too much)
+    zoom = Math.min(zoom, 2);
+
+    setZoomPreservingRotation(zoom);
+
+    // Center the content in the viewport
+    canvas.absolutePan({
+        x: minX * zoom - (canvas.width - contentWidth * zoom) / 2,
+        y: minY * zoom - (canvas.height - contentHeight * zoom) / 2
+    });
+
+    applyViewportRotation();
+    updateZoomDisplay();
+
+    console.log('Brought to scale: zoom =', zoom.toFixed(2));
+}
+
 function resetView() {
     setZoomPreservingRotation(1);
     canvas.absolutePan({ x: 0, y: 0 });
@@ -2240,6 +2412,25 @@ function rotateViewportBy(delta) {
 }
 
 /**
+ * Rotate the view to match the selected sheet's rotation angle
+ */
+function matchSheetRotation() {
+    if (!selectedSheet) {
+        alert('Please select a sheet first');
+        return;
+    }
+    setViewportRotation(-selectedSheet.rotation);
+    console.log('View rotated to match sheet:', selectedSheet.name, -selectedSheet.rotation);
+}
+
+/**
+ * Reset the viewport rotation to 0 degrees
+ */
+function resetViewportRotation() {
+    setViewportRotation(0);
+}
+
+/**
  * Apply the current viewport rotation to the canvas
  */
 function applyViewportRotation() {
@@ -2265,6 +2456,13 @@ function applyViewportRotation() {
     vpt[5] = panY;
 
     canvas.setViewportTransform(vpt);
+
+    // Update all object coordinates so selection borders, controls,
+    // and hit-testing align with the new viewport transform
+    canvas.forEachObject(function(obj) {
+        obj.setCoords();
+    });
+
     canvas.requestRenderAll();
 }
 
@@ -3024,7 +3222,7 @@ function applyAllCuts(sheetObj, cuts) {
         sheetObj._originalRender = sheetObj._render;
     }
     sheetObj._render = function(ctx) {
-        if (this._clipPolygon && this._clipPolygon.length >= 3) {
+        if (this._clipPolygon && this._clipPolygon.length >= 3 && !this._showUncut) {
             ctx.save();
             ctx.beginPath();
             ctx.moveTo(this._clipPolygon[0].x, this._clipPolygon[0].y);
@@ -3035,7 +3233,7 @@ function applyAllCuts(sheetObj, cuts) {
             ctx.clip();
         }
         this._originalRender(ctx);
-        if (this._clipPolygon) {
+        if (this._clipPolygon && !this._showUncut) {
             ctx.restore();
         }
     };
@@ -3043,6 +3241,7 @@ function applyAllCuts(sheetObj, cuts) {
     sheetObj.objectCaching = false;
     sheetObj.dirty = true;
     canvas.renderAll();
+    updateContextTools();
 }
 
 /**
@@ -3110,6 +3309,7 @@ function clearSelectedSheetCut() {
     // Save empty cuts to server
     saveCutData(selectedSheet.id, []);
     console.log('All cuts cleared from sheet:', selectedSheet.name);
+    updateContextTools();
 }
 
 function flipSelectedSheetCut() {
@@ -3136,6 +3336,38 @@ function flipSelectedSheetCut() {
     // Reapply all cuts
     applyAllCuts(sheetObj, cuts);
     saveCutData(selectedSheet.id, cuts);
+}
+
+function toggleShowUncut() {
+    if (!selectedSheet) return;
+
+    const sheetId = selectedSheet.id;
+    const sheetObj = canvas.getObjects().find(obj =>
+        obj.sheetData && obj.sheetData.id === sheetId
+    );
+    if (!sheetObj || !sheetObj._clipPolygon) return;
+
+    if (showUncutSheetId === sheetId) {
+        // Re-enable clipping
+        showUncutSheetId = null;
+        sheetObj._showUncut = false;
+    } else {
+        // Reset previous show-uncut sheet if any
+        if (showUncutSheetId !== null) {
+            const prevObj = canvas.getObjects().find(obj =>
+                obj.sheetData && obj.sheetData.id === showUncutSheetId
+            );
+            if (prevObj) {
+                prevObj._showUncut = false;
+                prevObj.dirty = true;
+            }
+        }
+        showUncutSheetId = sheetId;
+        sheetObj._showUncut = true;
+    }
+    sheetObj.dirty = true;
+    canvas.renderAll();
+    updateContextTools();
 }
 
 // Split Sheet Tool - splits a sheet into two independent pieces
@@ -3271,24 +3503,12 @@ async function handleSplitEnd(opt) {
                             angle: newSheet.rotation,
                             selectable: currentMode === 'select',
                             evented: true,
-                            hasControls: true,
-                            hasBorders: true,
-                            hasRotatingPoint: true,
+                            hasControls: false,
+                            hasBorders: false,
                             lockScalingX: true,
                             lockScalingY: true,
                             lockUniScaling: true,
                             lockRotation: false,
-                            cornerSize: 12,
-                            cornerColor: '#3498db',
-                            cornerStrokeColor: '#2980b9',
-                            transparentCorners: false,
-                            borderColor: '#3498db',
-                            rotatingPointOffset: 30,
-                        });
-                        img.setControlsVisibility({
-                            tl: false, tr: false, bl: false, br: false,
-                            ml: false, mt: false, mr: false, mb: false,
-                            mtr: true
                         });
                         img.sheetData = newSheet;
                         canvas.add(img);
@@ -3412,6 +3632,17 @@ async function renderImportBatches() {
             delBtn.title = 'Delete this batch and its assets';
             delBtn.addEventListener('click', () => deleteImportBatch(batch.id, batch.filename));
 
+            const visCheckbox = document.createElement('input');
+            visCheckbox.type = 'checkbox';
+            visCheckbox.className = 'batch-visibility';
+            visCheckbox.checked = true;
+            visCheckbox.title = 'Toggle batch visibility';
+            visCheckbox.style.marginRight = '0.3rem';
+            visCheckbox.addEventListener('change', function() {
+                toggleBatchVisibility(batch.id, this.checked);
+            });
+
+            header.appendChild(visCheckbox);
             header.appendChild(nameSpan);
             header.appendChild(countSpan);
             header.appendChild(typeBtn);
