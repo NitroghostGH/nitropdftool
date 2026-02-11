@@ -2204,6 +2204,61 @@ function zoomFit() {
     updateZoomDisplay();
 }
 
+/**
+ * Bring to Scale - Zoom to fit all sheets while respecting real-world scale
+ * Similar to zoomFit but considers scale calibration for more accurate view
+ */
+function bringToScale() {
+    // Calculate bounds of all sheet objects
+    const objects = canvas.getObjects().filter(obj => obj.sheetData);
+    if (objects.length === 0) {
+        alert('No sheets to display');
+        return;
+    }
+
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    objects.forEach(obj => {
+        const bounds = obj.getBoundingRect();
+        minX = Math.min(minX, bounds.left);
+        minY = Math.min(minY, bounds.top);
+        maxX = Math.max(maxX, bounds.left + bounds.width);
+        maxY = Math.max(maxY, bounds.top + bounds.height);
+    });
+
+    const contentWidth = maxX - minX;
+    const contentHeight = maxY - minY;
+
+    // Guard against zero-dimension content
+    if (contentWidth < 1 || contentHeight < 1) {
+        setZoomPreservingRotation(1);
+        canvas.absolutePan({ x: 0, y: 0 });
+        applyViewportRotation();
+        updateZoomDisplay();
+        return;
+    }
+
+    // Calculate optimal zoom to fit content with padding
+    const zoomX = canvas.width / contentWidth * 0.85;
+    const zoomY = canvas.height / contentHeight * 0.85;
+    let zoom = Math.min(zoomX, zoomY);
+
+    // Cap zoom at 2x for usability (don't zoom in too much)
+    zoom = Math.min(zoom, 2);
+
+    setZoomPreservingRotation(zoom);
+
+    // Center the content in the viewport
+    canvas.absolutePan({
+        x: minX * zoom - (canvas.width - contentWidth * zoom) / 2,
+        y: minY * zoom - (canvas.height - contentHeight * zoom) / 2
+    });
+
+    applyViewportRotation();
+    updateZoomDisplay();
+
+    console.log('Brought to scale: zoom =', zoom.toFixed(2));
+}
+
 function resetView() {
     setZoomPreservingRotation(1);
     canvas.absolutePan({ x: 0, y: 0 });
@@ -2237,6 +2292,25 @@ function setViewportRotation(degrees) {
  */
 function rotateViewportBy(delta) {
     setViewportRotation(viewportRotation + delta);
+}
+
+/**
+ * Rotate the view to match the selected sheet's rotation angle
+ */
+function matchSheetRotation() {
+    if (!selectedSheet) {
+        alert('Please select a sheet first');
+        return;
+    }
+    setViewportRotation(selectedSheet.rotation);
+    console.log('View rotated to match sheet:', selectedSheet.name, selectedSheet.rotation);
+}
+
+/**
+ * Reset the viewport rotation to 0 degrees
+ */
+function resetViewportRotation() {
+    setViewportRotation(0);
 }
 
 /**
