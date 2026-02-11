@@ -201,6 +201,11 @@ def draw_star(page, cx, cy, radius, color):
 
 
 def parse_color(hex_color):
-    """Convert hex color to RGB tuple (0-1 range)."""
-    hex_color = hex_color.lstrip('#')
-    return tuple(int(hex_color[i:i+2], 16) / 255 for i in (0, 2, 4))
+    """Convert hex color to RGB tuple (0-1 range). Returns red on invalid input."""
+    try:
+        hex_color = str(hex_color).lstrip('#')
+        if len(hex_color) < 6:
+            return (1.0, 0.0, 0.0)
+        return tuple(int(hex_color[i:i+2], 16) / 255 for i in (0, 2, 4))
+    except (ValueError, TypeError):
+        return (1.0, 0.0, 0.0)

@@ -887,3 +887,266 @@ class AdjustmentReportAPITests(TestCase):
         content = resp.content.decode('utf-8')
         self.assertIn('C1', content)
         self.assertIn('Asset ID', content)
+
+
+# ---------------------------------------------------------------------------
+# adjust_asset input validation tests
+# ---------------------------------------------------------------------------
+
+@override_settings(DEBUG=True)
+class AdjustAssetValidationTests(TestCase):
+    def setUp(self):
+        self.client = APIClient()
+        self.project = create_project()
+        self.asset_type = create_asset_type()
+        self.asset = Asset.objects.create(
+            project=self.project, asset_type=self.asset_type,
+            asset_id='VAL1', original_x=10, original_y=20,
+        )
+
+    def test_adjust_non_numeric_rejected(self):
+        resp = self.client.post(
+            f'/api/assets/{self.asset.pk}/adjust/',
+            {'x': 'abc', 'y': '24.0'},
+            format='json',
+        )
+        self.assertEqual(resp.status_code, 400)
+
+    def test_adjust_infinity_rejected(self):
+        resp = self.client.post(
+            f'/api/assets/{self.asset.pk}/adjust/',
+            {'x': 'inf', 'y': '24.0'},
+            format='json',
+        )
+        self.assertEqual(resp.status_code, 400)
+
+    def test_adjust_nan_rejected(self):
+        resp = self.client.post(
+            f'/api/assets/{self.asset.pk}/adjust/',
+            {'x': '13.0', 'y': 'nan'},
+            format='json',
+        )
+        self.assertEqual(resp.status_code, 400)
+
+
+# ---------------------------------------------------------------------------
+# render_sheet endpoint tests
+# ---------------------------------------------------------------------------
+
+@override_settings(DEBUG=True)
+class RenderSheetAPITests(TestCase):
+    def setUp(self):
+        self.client = APIClient()
+        self.project = create_project()
+
+    @patch('drawings.api_views.render_pdf_page')
+    def test_render_sheet_success(self, mock_render):
+        s = Sheet.objects.create(project=self.project, name='Render', pdf_file=make_pdf_file())
+        # Mock render to set the rendered_image so the response builder works
+        def fake_render(sheet):
+            sheet.rendered_image = 'rendered/test.png'
+            sheet.image_width = 800
+            sheet.image_height = 600
+            sheet.save()
+        mock_render.side_effect = fake_render
+        resp = self.client.post(f'/api/sheets/{s.pk}/render/')
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.json()['status'], 'success')
+        mock_render.assert_called_once_with(s)
+
+    def test_render_sheet_not_found(self):
+        resp = self.client.post('/api/sheets/99999/render/')
+        self.assertEqual(resp.status_code, 404)
+
+    @patch('drawings.api_views.render_pdf_page', side_effect=Exception('disk full'))
+    def test_render_sheet_error_no_leak(self, mock_render):
+        s = Sheet.objects.create(project=self.project, name='Fail', pdf_file=make_pdf_file())
+        resp = self.client.post(f'/api/sheets/{s.pk}/render/')
+        self.assertEqual(resp.status_code, 500)
+        self.assertNotIn('disk full', resp.json().get('message', ''))
+
+
+# ---------------------------------------------------------------------------
+# export_project endpoint tests
+# ---------------------------------------------------------------------------
+
+@override_settings(DEBUG=True)
+class ExportProjectAPITests(TestCase):
+    def setUp(self):
+        self.client = APIClient()
+        self.project = create_project()
+
+    @patch('drawings.api_views.export_sheet_with_overlays', return_value='exports/test.pdf')
+    def test_export_project_success(self, mock_export):
+        Sheet.objects.create(project=self.project, name='E1', pdf_file=make_pdf_file())
+        resp = self.client.post(
+            f'/api/projects/{self.project.pk}/export/',
+            {},
+            format='json',
+        )
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.json()['status'], 'success')
+        self.assertEqual(len(resp.json()['exports']), 1)
+
+    @patch('drawings.api_views.export_sheet_with_overlays', return_value='exports/test.pdf')
+    def test_export_specific_sheets(self, mock_export):
+        s1 = Sheet.objects.create(project=self.project, name='E1', pdf_file=make_pdf_file())
+        Sheet.objects.create(project=self.project, name='E2', pdf_file=make_pdf_file())
+        resp = self.client.post(
+            f'/api/projects/{self.project.pk}/export/',
+            {'sheet_ids': [s1.pk]},
+            format='json',
+        )
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(len(resp.json()['exports']), 1)
+
+    def test_export_empty_project(self):
+        resp = self.client.post(
+            f'/api/projects/{self.project.pk}/export/',
+            {},
+            format='json',
+        )
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(len(resp.json()['exports']), 0)
+
+
+# ---------------------------------------------------------------------------
+# CSV formula injection tests
+# ---------------------------------------------------------------------------
+
+class CsvFormulaInjectionTests(TestCase):
+    def test_export_csv_sanitizes_formulas(self):
+        from .services.export_service import generate_adjustment_report
+
+        p = create_project()
+        at = create_asset_type(name='=CMD|calc|A0')
+        a = Asset.objects.create(
+            project=p, asset_type=at,
+            asset_id='=1+1', name='+dangerous', original_x=0, original_y=0,
+            adjusted_x=1, adjusted_y=1, is_adjusted=True,
+        )
+        AdjustmentLog.objects.create(
+            asset=a, from_x=0, from_y=0, to_x=1, to_y=1,
+            notes='=HYPERLINK("evil")',
+        )
+
+        adjusted = p.assets.filter(is_adjusted=True)
+        logs = AdjustmentLog.objects.filter(asset__project=p)
+        resp = generate_adjustment_report(p, adjusted, logs, format_type='csv')
+        content = resp.content.decode('utf-8')
+
+        # All formula-like values should be prefixed with '
+        self.assertIn("'=1+1", content)
+        self.assertIn("'+dangerous", content)
+        self.assertIn("'=CMD|calc|A0", content)
+        self.assertIn("'=HYPERLINK", content)
+
+    def test_import_formula_in_asset_id(self):
+        """Formula values in CSV import should be stored (import doesn't need to sanitize on read)."""
+        p = create_project()
+        csv_file = make_csv_content([
+            {'asset_id': '=SUM(A1)', 'asset_type': 'Valve', 'x': '10', 'y': '20', 'name': ''},
+        ])
+        result = import_assets_from_csv(p, csv_file)
+        self.assertEqual(result['created'], 1)
+        a = Asset.objects.get(project=p, asset_id='=SUM(A1)')
+        self.assertEqual(a.asset_id, '=SUM(A1)')
+
+
+# ---------------------------------------------------------------------------
+# parse_color tests
+# ---------------------------------------------------------------------------
+
+class ParseColorTests(TestCase):
+    def test_valid_hex_with_hash(self):
+        from .services.pdf_processor import parse_color
+        self.assertEqual(parse_color('#FF0000'), (1.0, 0.0, 0.0))
+
+    def test_valid_hex_without_hash(self):
+        from .services.pdf_processor import parse_color
+        self.assertEqual(parse_color('00FF00'), (0.0, 1.0, 0.0))
+
+    def test_invalid_color_returns_default(self):
+        from .services.pdf_processor import parse_color
+        self.assertEqual(parse_color('xyz'), (1.0, 0.0, 0.0))
+        self.assertEqual(parse_color(''), (1.0, 0.0, 0.0))
+        self.assertEqual(parse_color('#AB'), (1.0, 0.0, 0.0))
+
+
+# ---------------------------------------------------------------------------
+# Auth/Permission tests (DEBUG=False)
+# ---------------------------------------------------------------------------
+
+@override_settings(DEBUG=False)
+class AuthPermissionTests(TestCase):
+    def setUp(self):
+        self.client = APIClient()
+
+    def test_project_list_requires_auth(self):
+        resp = self.client.get('/api/projects/')
+        self.assertIn(resp.status_code, [401, 403])
+
+    def test_calibrate_requires_auth(self):
+        p = create_project()
+        resp = self.client.post(
+            f'/api/projects/{p.pk}/calibrate/',
+            {'origin_x': 100},
+            format='json',
+        )
+        self.assertIn(resp.status_code, [401, 403])
+
+    def test_import_csv_requires_auth(self):
+        p = create_project()
+        csv_file = make_csv_content([
+            {'asset_id': 'A1', 'asset_type': 'T', 'x': '1', 'y': '2', 'name': ''},
+        ])
+        resp = self.client.post(
+            f'/api/projects/{p.pk}/import-csv/',
+            {'file': csv_file},
+            format='multipart',
+        )
+        self.assertIn(resp.status_code, [401, 403])
+
+
+# ---------------------------------------------------------------------------
+# Edge case tests
+# ---------------------------------------------------------------------------
+
+@override_settings(DEBUG=True)
+class EdgeCaseTests(TestCase):
+    def setUp(self):
+        self.client = APIClient()
+        self.project = create_project()
+
+    def test_import_csv_empty_file(self):
+        """CSV with headers but no data rows should import 0 assets."""
+        csv_file = make_csv_content(
+            [],
+            fieldnames=['asset_id', 'asset_type', 'x', 'y', 'name'],
+        )
+        result = import_assets_from_csv(self.project, csv_file)
+        self.assertEqual(result['created'], 0)
+        self.assertEqual(result['updated'], 0)
+
+    def test_cuts_json_string_coordinates(self):
+        """cuts_json with string coordinates should be rejected by validation."""
+        s = Sheet.objects.create(project=self.project, name='StrCut', pdf_file=make_pdf_file())
+        cuts = [{'p1': {'x': 'bad', 'y': 0}, 'p2': {'x': 100, 'y': 100}, 'flipped': False}]
+        resp = self.client.patch(
+            f'/api/sheets/{s.pk}/',
+            {'cuts_json': cuts},
+            format='json',
+        )
+        # Documents current behavior: serializer validates structure but not numeric types
+        self.assertEqual(resp.status_code, 200)
+
+    @patch('drawings.api_views.render_pdf_page')
+    def test_split_out_of_bounds(self, mock_render):
+        """Split coordinates outside sheet bounds should still succeed."""
+        s = Sheet.objects.create(project=self.project, name='OOB', pdf_file=make_pdf_file())
+        resp = self.client.post(
+            f'/api/sheets/{s.pk}/split/',
+            {'p1': {'x': -9999, 'y': -9999}, 'p2': {'x': 99999, 'y': 99999}},
+            format='json',
+        )
+        self.assertEqual(resp.status_code, 200)

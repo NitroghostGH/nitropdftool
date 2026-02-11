@@ -127,7 +127,7 @@ def render_sheet(request, pk):
         })
     except Exception as e:
         logger.error("Failed to render sheet %d: %s", pk, e)
-        return Response({'status': 'error', 'message': str(e)}, status=500)
+        return Response({'status': 'error', 'message': 'Failed to render sheet'}, status=500)
 
 
 class AssetListCreate(generics.ListCreateAPIView):
@@ -158,6 +158,12 @@ def adjust_asset(request, pk):
     if new_x is None or new_y is None:
         return Response({'error': 'x and y coordinates required'}, status=400)
 
+    try:
+        new_x = _parse_finite_float(new_x, 'x')
+        new_y = _parse_finite_float(new_y, 'y')
+    except ValueError as e:
+        return Response({'error': str(e)}, status=400)
+
     # Get the "from" coordinates
     from_x = asset.current_x
     from_y = asset.current_y
@@ -167,14 +173,14 @@ def adjust_asset(request, pk):
         asset=asset,
         from_x=from_x,
         from_y=from_y,
-        to_x=float(new_x),
-        to_y=float(new_y),
+        to_x=new_x,
+        to_y=new_y,
         notes=notes
     )
 
     # Update asset
-    asset.adjusted_x = float(new_x)
-    asset.adjusted_y = float(new_y)
+    asset.adjusted_x = new_x
+    asset.adjusted_y = new_y
     asset.is_adjusted = True
     asset.save()
 
@@ -211,9 +217,12 @@ def import_csv(request, project_pk):
             fixed_asset_type=fixed_asset_type,
         )
         return Response(result)
-    except Exception as e:
+    except ValueError as e:
         logger.error("CSV import failed for project %d: %s", project_pk, e)
         return Response({'error': str(e)}, status=400)
+    except Exception as e:
+        logger.error("CSV import failed for project %d: %s", project_pk, e)
+        return Response({'error': 'CSV import failed'}, status=400)
 
 
 @api_view(['POST'])
@@ -479,7 +488,7 @@ def split_sheet(request, pk):
         logger.info("Sheet %d split into %d and %d", original.pk, original.pk, new_sheet.pk)
     except Exception as e:
         logger.error("Failed to split sheet %d: %s", pk, e)
-        return Response({'error': f'Split failed: {e}'}, status=500)
+        return Response({'error': 'Split failed'}, status=500)
 
     return Response({
         'original_id': original.id,
