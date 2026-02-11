@@ -11,6 +11,13 @@ from .pdf_processor import render_overlay_on_pdf
 logger = logging.getLogger(__name__)
 
 
+def sanitize_csv_value(value):
+    """Sanitize a string value for CSV export to prevent formula injection."""
+    if isinstance(value, str) and value and value[0] in ('=', '+', '-', '@', '\t', '\r'):
+        return "'" + value
+    return value
+
+
 def sanitize_filename(name, max_length=100):
     """
     Sanitize a string for use as a filename.
@@ -110,9 +117,9 @@ def generate_adjustment_report(project, adjusted_assets, logs, format_type='csv'
             last_notes = last_log.notes if last_log else ''
 
             writer.writerow([
-                asset.asset_id,
-                asset.name,
-                asset.asset_type.name,
+                sanitize_csv_value(asset.asset_id),
+                sanitize_csv_value(asset.name),
+                sanitize_csv_value(asset.asset_type.name),
                 f"{asset.original_x:.3f}",
                 f"{asset.original_y:.3f}",
                 f"{asset.adjusted_x:.3f}" if asset.adjusted_x else '',
@@ -121,7 +128,7 @@ def generate_adjustment_report(project, adjusted_assets, logs, format_type='csv'
                 f"{delta_y:.3f}",
                 f"{asset.delta_distance:.3f}",
                 asset.adjustment_logs.count(),
-                last_notes
+                sanitize_csv_value(last_notes)
             ])
 
         response = HttpResponse(output.getvalue(), content_type='text/csv')
